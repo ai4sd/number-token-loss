@@ -27,7 +27,7 @@ jobs:
     - name: Run Ruff
       env:
         PYTHONPATH: .
-      run: uv run ruff --check ntloss tests
+      run: uv run ruff check ntloss tests
 
     - name: Run mypy
       env:
