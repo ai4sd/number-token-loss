@@ -240,7 +240,7 @@ class NTLoss(AbstractNTLoss):
         )
 
         # loss is the absolute difference weighted by the softmax probs
-        loss = (abs_diff * softmax_probs[valid_positions]).sum(axis=-1)
+        loss = (abs_diff * softmax_probs[valid_positions]).sum(dim=-1)
 
         if reduction == "mean":
             # Mean pooling (weighted by loss mask)
