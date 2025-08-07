@@ -22,8 +22,7 @@ jobs:
 
     - name: Install project & dev dependencies
       run: |
-        uv pip install --upgrade pip
-        uv pip install ".[dev]"
+        uv sync
 
     - name: Run Ruff
       env:
