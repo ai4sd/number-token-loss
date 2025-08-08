@@ -27,7 +27,9 @@ class AbstractNTLoss(ABC):
         """Setting up attributes needed by NT loss"""
 
         # Add digits to vocab if not there yet.
-        self.tokenizer.add_tokens(list(map(str, range(10))))
+        new_tokens = self.tokenizer.add_tokens(list(map(str, range(10))))
+        if new_tokens > 0:
+            logger.warning(f"Added {new_tokens} new tokens for number token loss")
         vocab = self.tokenizer.get_vocab()
         self.number_values = torch.full((len(vocab),), float("nan"))
 
@@ -41,9 +43,6 @@ class AbstractNTLoss(ABC):
 
         self.is_number_token = ~torch.isnan(self.number_values)
         self.number_values_dense = self.number_values[self.is_number_token]
-        logger.info(
-            f"Found {len(self.number_values_dense)} number tokens in vocab: {self.number_values_dense.tolist()}"
-        )
 
     @abstractmethod
     def forward(
