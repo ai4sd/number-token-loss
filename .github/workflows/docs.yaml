@@ -4,12 +4,13 @@ on:
   push:
     branches:
       - main
+      - deploy_docs
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write    # for gh-pages
+      contents: write    
       pages: write
       id-token: write
 
@@ -17,7 +18,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          persist-credentials: false  # don’t expose PAT
+          persist-credentials: false 
 
       - name: Set up Python & uv
         uses: actions/setup-python@v4
