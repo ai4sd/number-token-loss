@@ -1,0 +1,61 @@
+[project]
+name = "ntloss"
+version = "0.0.3"
+description = "Number Token Loss - A regression-alike loss to improve numerical reasoning in language models"
+readme = "README.md"                    
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Jannis Born", email = "jab@zurich.ibm.com" },
+]
+dependencies = [
+  "transformers>=4.55.0",
+  "loguru>=0.7.3",
+  "torch>=2.7.1",
+]
+keywords = [
+    "Machine Learning",
+    "Language Models",
+    "Number Token Loss",
+    "AI4Math",
+    "LLM",
+    "LLM Training",
+    "Reasoning models"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence"
+]
+
+
+[project.urls]
+"Source code"     = "https://github.com/AI4SD/number-token-loss"
+"Bug Tracker"  = "https://github.com/AI4SD/number-token-loss/issues"
+"Paper"     = "https://arxiv.org/abs/2411.02083"
+"Demo"     = "https://huggingface.co/spaces/jannisborn/NumberTokenLoss"
+"Landing Page"     = "https://tum-ai.github.io/number-token-loss/"
+
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+dev-dependencies = [
+  "pytest>=7.0",
+  "ruff>=0.12",
+  "mypy>=1.17.1"
+]
+
+[tool.ruff]
+line-length = 88
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["ntloss", "ntloss.*"]
