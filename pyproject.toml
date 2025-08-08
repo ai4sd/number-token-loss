@@ -7,6 +7,9 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
   { name = "Jannis Born", email = "jab@zurich.ibm.com" },
+  { name = "Lars Pennig", email = "lpennig@t-online.de" },
+  { name = "Jonas Zausinger", email = "jonas.zausinger@tum.de" },
+  { name = "Sarah de Ruiter", email = "Sarah.Louise.De.Ruiter@ibm.com" },
 ]
 dependencies = [
   "transformers>=4.55.0",
