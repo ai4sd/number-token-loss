@@ -1,7 +1,8 @@
-<div align="center">
+o<div align="center">
 
 
-# ntloss - a PyPI package for a regression loss on number tokens
+# ntloss - a regression-like loss for language models
+
 
 [![Paper](https://img.shields.io/badge/Paper-ICML-darkgreen.svg)](https://arxiv.org/abs/2411.02083)
 [![Landing](https://img.shields.io/badge/GitHub-Pages-blue.svg)](https://tum-ai.github.io/number-token-loss/)
