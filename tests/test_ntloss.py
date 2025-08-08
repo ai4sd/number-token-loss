@@ -113,9 +113,9 @@ def test_correct_minimum(loss_class, logit_builder):
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx)
             loss = loss_fn(logits, labels)
+            if loss_class == NTLoss:
+                print(gt_token, TOKENIZER.convert_ids_to_tokens(peak_id), loss)
             losses[i, peak_idx] = loss.item()
-            if logit_builder == gaussian_logits:
-                print(logits[:, :, loss_fn.is_number_token])
 
         # TODO: Ensure that if GT is number and mass is on text, loss is at least as
         # high as for worst number prediction. This is not there yet and the reason

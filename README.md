@@ -2,12 +2,12 @@
 <div align="center">
 
 
-# ntloss -- a PyPI package for a regression loss on number tokens
+# ntloss - a PyPI package for a regression loss on number tokens
 
 [![Paper](https://img.shields.io/badge/Paper-ICML-darkgreen.svg)](https://arxiv.org/abs/2411.02083)
 [![Landing](https://img.shields.io/badge/GitHub-Pages-blue.svg)](https://tum-ai.github.io/number-token-loss/)
 [![Demo](https://img.shields.io/badge/🤗-Demo-yellow.svg)](https://huggingface.co/spaces/jannisborn/NumberTokenLoss)
-[![CI](https://github.com/AI4SD/number-token-loss/actions/workflows/ci.yml/badge.svg)](https://github.com/AI4SD/number-token-loss/actions/workflows/ci.yml)
+[![CI](https://github.com/AI4SD/number-token-loss/actions/workflows/ci.yaml/badge.svg)](https://github.com/AI4SD/number-token-loss/actions/workflows/ci.yaml)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![PyPI](https://badge.fury.io/py/ntloss.svg)](https://badge.fury.io/py/ntloss)
 [![Downloads](https://static.pepy.tech/badge/ntloss)](https://pepy.tech/project/ntloss)
