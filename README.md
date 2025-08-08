@@ -1,7 +1,7 @@
-o<div align="center">
+<div align="center">
 
 
-# ntloss - a regression-like loss for language models
+# `NTLoss` - a regression-like loss for LLMs
 
 
 [![Paper](https://img.shields.io/badge/Paper-ICML-darkgreen.svg)](https://arxiv.org/abs/2411.02083)
