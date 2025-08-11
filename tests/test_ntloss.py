@@ -136,3 +136,94 @@ def test_correct_minimum(loss_class, logit_builder):
             )
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
+
+
+@pytest.mark.parametrize("loss_class", [NTLoss])
+@pytest.mark.parametrize("logit_builder", [dirac_logits])
+def test_dist_matrix(loss_class, logit_builder):
+    loss_fn = loss_class(TOKENIZER, setup_dist_lookup=True)
+    loss_fn_lookup = loss_class(TOKENIZER, setup_dist_lookup=True)
+    ref_tokens = [str(i) for i in range(10)] + ["A"]
+    ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
+
+    # Guard: make sure all required tokens exist in the vocab
+    assert all(i is not None and i >= 0 for i in ref_ids), "Missing token id"
+
+    # Make sure loss computed with and without lookup table are the same
+    losses = torch.zeros(len(ref_ids), len(ref_ids), dtype=torch.float32)
+    losses_lookup = torch.zeros(len(ref_ids), len(ref_ids), dtype=torch.float32)
+    for i, (gt_token, gt_token_id) in enumerate(zip(ref_tokens, ref_ids)):
+        labels = torch.tensor([[gt_token_id]], dtype=torch.long)
+        for peak_idx, peak_id in enumerate(ref_ids):
+            logits = logit_builder(ref_ids, peak_id, peak_idx)
+            loss = loss_fn(logits, labels)
+            loss_lookup = loss_fn_lookup(logits, labels)
+            if loss_class == NTLoss:
+                print(
+                    gt_token,
+                    TOKENIZER.convert_ids_to_tokens(peak_id),
+                    loss,
+                    loss_lookup,
+                )
+            losses[i, peak_idx] = loss.item()
+            losses_lookup[i, peak_idx] = loss_lookup.item()
+
+    assert not torch.isnan(losses_lookup).any(), "Encountered NaN in loss matrix"
+
+    assert torch.allclose(losses, losses_lookup, atol=1e-8), (
+        "Loss should be the same whether lookup table is used or not, as long as squashing ",
+        "factor is not set.",
+    )
+
+
+@pytest.mark.parametrize("loss_class", [NTLoss])
+@pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
+@pytest.mark.parametrize("squash_factor", [0.5, 1, 2, 20])
+def test_correct_squashing(loss_class, logit_builder, squash_factor):
+    # Make sure wrong uses of the squashing factor are caught
+    if squash_factor <= 1:
+        with pytest.raises(
+            AssertionError,
+            match=r"The squash factor can't be equal to or smaller than 1*",
+        ):
+            loss_fn = loss_class(TOKENIZER, squash_factor=squash_factor)
+
+        return
+
+    loss_fn = loss_class(TOKENIZER, squash_factor=squash_factor)
+    ref_tokens = [str(i) for i in range(10)] + ["A"]
+    ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
+
+    # Guard: make sure all required tokens exist in the vocab
+    assert all(i is not None and i >= 0 for i in ref_ids), "Missing token id"
+
+    # Make sure that the maximum distance in loss' distance matrix is larger than
+    # nonzero minimum, with a factor equal to the squash_factor used
+    inf = torch.finfo(loss_fn.dist_lookup.dtype).max
+    lookup_nz = loss_fn.dist_lookup.masked_fill(loss_fn.dist_lookup == 0, inf)
+    min_lookup_nz = lookup_nz.min()
+    max_lookup = loss_fn.dist_lookup.max()
+
+    computed = torch.div(max_lookup, min_lookup_nz)
+    expected = torch.tensor([squash_factor], dtype=loss_fn.dist_lookup.dtype)
+    assert torch.allclose(computed, expected, atol=1e-8), (
+        "Distance to farthest number token should be the defined squashing factor larger ",
+        f"than the distance to the closest number token ({computed} instead of {expected}).",
+    )
+
+    # Also make sure that the number token loss is thus always smaller or equal to the squashing factor
+    losses = torch.zeros(len(ref_ids), len(ref_ids), dtype=torch.float32)
+    for i, (gt_token, gt_token_id) in enumerate(zip(ref_tokens, ref_ids)):
+        labels = torch.tensor([[gt_token_id]], dtype=torch.long)
+        for peak_idx, peak_id in enumerate(ref_ids):
+            logits = logit_builder(ref_ids, peak_id, peak_idx)
+            loss = loss_fn(logits, labels)
+            if loss_class == NTLoss:
+                print(gt_token, TOKENIZER.convert_ids_to_tokens(peak_id), loss)
+            losses[i, peak_idx] = loss.item()
+
+    assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
+
+    assert torch.all(losses <= squash_factor), (
+        "Loss should be smaller or equal to the squashing factor, if this is set."
+    )
