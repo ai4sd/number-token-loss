@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from numbers import Number
 from typing import Callable, Optional
 
 import torch
@@ -27,8 +28,9 @@ class AbstractNTLoss(ABC):
         """Setting up attributes needed by NT loss"""
 
         # Add digits to vocab if not there yet.
+        vocab_size = len(self.tokenizer)
         new_tokens = self.tokenizer.add_tokens(list(map(str, range(10))))
-        if new_tokens > 0:
+        if vocab_size < len(self.tokenizer) and new_tokens > 0:
             logger.warning(f"Added {new_tokens} new tokens for number token loss")
         vocab = self.tokenizer.get_vocab()
         self.number_values = torch.full((len(vocab),), float("nan"))
@@ -170,6 +172,79 @@ class NTLossDotProduct(AbstractNTLoss):
 class NTLoss(AbstractNTLoss):
     """Class for Wasserstein-based NTLoss. This is the default as per our paper."""
 
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizer,
+        setup_dist_lookup: bool = False,
+        squash_factor: Optional[float] = None,
+    ):
+        """
+        NTL constructor.
+
+        Args:
+            tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
+            setup_dist_lookup: Whether to setup a distance lookup matrix during initialisation.
+            squash: The optional squashing factor for the NTL.
+        """
+        super().__init__(tokenizer=tokenizer)
+
+        self.setup_dist_lookup = setup_dist_lookup
+        self.squash_factor = squash_factor
+        if setup_dist_lookup or isinstance(squash_factor, Number):
+            self.setup_distance_lookup(squash_factor)
+
+    def setup_distance_lookup(
+        self,
+        squash_factor: Optional[float] = None,
+    ):
+        """
+        Set up a lookup table for the distances between the number tokens.
+        Use squash_factor to control by what factor the farthest number token is worse than the closest, incorrect number token.
+        If not squash_factor is not set: with 10 number tokens (0-9), the squashing factor is 9.
+
+        Args:
+            squash_factor: The optional squashing factor used.
+
+        """
+
+        # Get token ids for number tokens
+        num_ids = torch.nonzero(self.is_number_token, as_tuple=True)[0]
+        # Create mapping from number token ids to their index in order of appearance in vocab
+        vocab_to_dist_idx = torch.full((len(self.tokenizer),), -1, dtype=torch.long)
+        vocab_to_dist_idx[num_ids] = torch.arange(num_ids.size(0), dtype=torch.long)
+
+        # Build NxN abs-diff matrix
+        vals = self.number_values_dense.unsqueeze(0)  # (1 x N)
+        diff = torch.abs(vals - vals.t())  # (N x N)
+
+        if isinstance(squash_factor, Number):
+            assert squash_factor > 1, (
+                f"The squash factor can't be equal to or smaller than 1, please use a different squashing factor than {squash_factor}"
+            )
+
+            # Mask out zeros to find the smallest nonzero diff
+            inf = torch.finfo(diff.dtype).max
+            diff_nonzero = diff.masked_fill(diff == 0, inf)
+            global_min_nz = diff_nonzero.min()
+            # Find largest diff
+            global_max = diff.max()
+
+            # Compute scaling factor based on indicated squash factor
+            scale = (squash_factor - 1) / (global_max - global_min_nz)
+            # Scale the absolute differences using scaling factor
+            lookup = 1 + (diff - global_min_nz) * scale
+            lookup[diff == 0] = 0.0
+
+            additional_log_info = f", used a squashing factor of {squash_factor}."
+        else:
+            lookup = diff
+            additional_log_info = ""
+
+        self.vocab_to_dist_idx = vocab_to_dist_idx
+        self.dist_lookup = lookup
+
+        logger.info(f"Done setting up the distance lookup table{additional_log_info}")
+
     def forward(
         self,
         logits: Tensor,
@@ -234,9 +309,12 @@ class NTLoss(AbstractNTLoss):
         softmax_probs = F.softmax(nt_logits, dim=-1)
 
         # compute absolute difference between the true numbers and all possible number values
-        abs_diff = torch.abs(
-            y[valid_positions].unsqueeze(-1) - self.number_values_dense
-        )
+        if self.setup_dist_lookup or isinstance(self.squash_factor, Number):
+            abs_diff = self.dist_lookup[self.vocab_to_dist_idx[labels[valid_positions]]]
+        else:
+            abs_diff = torch.abs(
+                y[valid_positions].unsqueeze(-1) - self.number_values_dense
+            )
 
         # loss is the absolute difference weighted by the softmax probs
         loss = (abs_diff * softmax_probs[valid_positions]).sum(dim=-1)
