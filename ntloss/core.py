@@ -12,16 +12,28 @@ from .utils import is_number
 
 
 class AbstractNTLoss(ABC):
-    def __init__(self, tokenizer: PreTrainedTokenizer):
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizer,
+        weight_using_logits: bool = False,
+        reg_factor: float = 1.0,
+    ):
         """
         NTL constructor.
 
         Args:
-            tokenizer: standard HF tokenizer
+            tokenizer: Standard HF tokenizer
+            weight_using_logits: Whether to scale the NTL using the logit weight on
+                number tokens. Defaults to False.
+            reg_factor: The regularization factor to apply to the computed CE loss.
+                Defaults to 1.0, i.e. no regularization.
 
         """
         super().__init__()
         self.tokenizer = tokenizer
+        self.weight_using_logits = weight_using_logits
+        self.reg_factor = reg_factor
+
         self.setup_number_tokens()
 
     def setup_number_tokens(self):
@@ -64,18 +76,26 @@ class NTLossDotProduct(AbstractNTLoss):
     """Class for NT losses that produce a token-wise numerical output"""
 
     def __init__(
-        self, tokenizer: PreTrainedTokenizer, loss_function: Callable = F.mse_loss
+        self,
+        tokenizer: PreTrainedTokenizer,
+        weight_using_logits: bool = False,
+        reg_factor: float = 1.0,
+        loss_function: Callable = F.mse_loss
     ):
         """
         NTL constructor.
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
+            weight_using_logits: Whether to scale the NTL using the logit weight on 
+                number tokens. Defaults to False.
+            reg_factor: The regularization factor to apply to the computed CE loss.
+                Defaults to 1.0, i.e. no regularization.
             loss_function: Function to apply on the delta between the ground truth number
                 and the obtained dot product (nt-probs * token-values).
 
         """
-        super().__init__(tokenizer=tokenizer)
+        super().__init__(tokenizer=tokenizer, weight_using_logits=weight_using_logits)
         self.loss_function = loss_function
 
     def forward(
@@ -146,6 +166,17 @@ class NTLossDotProduct(AbstractNTLoss):
         # Apply specified loss function to y and yhat
         loss = self.loss_function(yhat, y[valid_positions], reduction="none")
 
+        # If weight_using_logits: compute weights for NTL and CE based on logits
+        if self.weight_using_logits:
+            # Take softmax over logits of all tokens in vocab and compute NT logit weight
+            softmax_probs_all = F.softmax(logits, dim=-1)
+            self.nt_logit_weight = torch.sum(
+                softmax_probs_all[:, :, self.is_number_token], dim=-1
+            )[valid_positions]
+
+            # Apply weights for NTL element-wise
+            loss *= self.nt_logit_weight
+
         if reduction == "mean":
             # Mean pooling (weighted by loss mask)
             loss = torch.dot(
@@ -167,7 +198,6 @@ class NTLossDotProduct(AbstractNTLoss):
             raise ValueError(f"{reduction} is not a valid value for reduction")
 
         return loss
-
 
 class NTLoss(AbstractNTLoss):
     """Class for Wasserstein-based NTLoss. This is the default as per our paper."""
