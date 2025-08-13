@@ -232,6 +232,7 @@ class NTLoss(AbstractNTLoss):
         Set up a lookup table for the distances between the number tokens.
         Use squash_factor to control by what factor the farthest number token is worse than the closest, incorrect number token.
         If not squash_factor is not set: with 10 number tokens (0-9), the squashing factor is 9.
+        NOTE: With a squashing factor of 1, this basically collapses to cross entropy.
 
         Args:
             squash_factor: The optional squashing factor used.
