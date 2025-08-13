@@ -15,6 +15,8 @@ class AbstractNTLoss(ABC):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        add_nt_to_vocab: bool = True,
+        digit_nt_only: bool = True,
         weight_using_logits: bool = False,
         reg_factor: float = 1.0,
     ):
@@ -23,6 +25,10 @@ class AbstractNTLoss(ABC):
 
         Args:
             tokenizer: Standard HF tokenizer
+            add_nt_to_vocab: Whether to ensure at least all digits are in the vocab. 
+                Defaults to True
+            digit_nt_only: Whether to ensure only digit tokens are considered number tokens, 
+                stabalizing training with NTL. Defaults to True.
             weight_using_logits: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to False.
             reg_factor: The regularization factor to apply to the computed CE loss.
@@ -31,6 +37,8 @@ class AbstractNTLoss(ABC):
         """
         super().__init__()
         self.tokenizer = tokenizer
+        self.add_nt_to_vocab = add_nt_to_vocab
+        self.digit_nt_only = digit_nt_only
         self.weight_using_logits = weight_using_logits
         self.reg_factor = reg_factor
 
@@ -41,7 +49,8 @@ class AbstractNTLoss(ABC):
 
         # Add digits to vocab if not there yet.
         vocab_size = len(self.tokenizer)
-        new_tokens = self.tokenizer.add_tokens(list(map(str, range(10))))
+        if self.add_nt_to_vocab:
+            new_tokens = self.tokenizer.add_tokens(list(map(str, range(10))))
         if vocab_size < len(self.tokenizer) and new_tokens > 0:
             logger.warning(f"Added {new_tokens} new tokens for number token loss")
         vocab = self.tokenizer.get_vocab()
@@ -50,9 +59,12 @@ class AbstractNTLoss(ABC):
         # Try to convert each token to a float after stripping the space prefix
         for token, id in vocab.items():
             if is_number(token, finite=True):
+                if self.digit_nt_only:
                 # NOTE: This check ensures number token value only occurs for digits, not for multi-digit numbers (123)
                 # This stabilizes training with NTL. Can be altered though, see paper experiments.
-                if -1 <= float(token) <= 9 and len(token.lstrip(" ")) == 1:
+                    if -1 <= float(token) <= 9 and len(token.lstrip(" ")) == 1:
+                        self.number_values[id] = float(token)
+                else:
                     self.number_values[id] = float(token)
 
         self.is_number_token = ~torch.isnan(self.number_values)
@@ -78,15 +90,21 @@ class NTLossDotProduct(AbstractNTLoss):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        add_nt_to_vocab: bool = True,
+        digit_nt_only: bool = True,
         weight_using_logits: bool = False,
         reg_factor: float = 1.0,
-        loss_function: Callable = F.mse_loss
+        loss_function: Callable = F.mse_loss,
     ):
         """
         NTL constructor.
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
+            add_nt_to_vocab: Whether to ensure at least all digits are in the vocab. 
+                Defaults to True
+            digit_nt_only: Whether to ensure only digit tokens are considered number tokens, 
+                stabalizing training with NTL. Defaults to True.
             weight_using_logits: Whether to scale the NTL using the logit weight on 
                 number tokens. Defaults to False.
             reg_factor: The regularization factor to apply to the computed CE loss.
@@ -95,7 +113,12 @@ class NTLossDotProduct(AbstractNTLoss):
                 and the obtained dot product (nt-probs * token-values).
 
         """
-        super().__init__(tokenizer=tokenizer, weight_using_logits=weight_using_logits)
+        super().__init__(
+            tokenizer=tokenizer,
+            add_nt_to_vocab=add_nt_to_vocab,
+            digit_nt_only=digit_nt_only,
+            weight_using_logits=weight_using_logits,
+        )
         self.loss_function = loss_function
 
     def forward(
@@ -135,9 +158,7 @@ class NTLossDotProduct(AbstractNTLoss):
         label_mask = (
             loss_mask[valid_positions]
             if loss_mask is not None
-            else torch.ones(y.size(), dtype=logits.dtype, device=labels.device)[
-                valid_positions
-            ]
+            else torch.ones_like(labels, dtype=logits.dtype)[valid_positions]
         )
 
         # If no digit tokens in batch, or total of the relevant loss_mask is zero, no need for upcoming calculations
@@ -145,9 +166,9 @@ class NTLossDotProduct(AbstractNTLoss):
             torch.count_nonzero(label_mask) == 0
         ):
             if (reduction == "mean") | (reduction == "sum"):
-                loss = torch.tensor(0, dtype=labels.dtype, device=labels.device)
+                loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
-                loss = torch.zeros_like(valid_positions)
+                loss = torch.zeros_like(labels, dtype=logits.dtype)
             else:
                 raise ValueError(f"{reduction} is not a valid value for reduction")
 
@@ -205,7 +226,8 @@ class NTLoss(AbstractNTLoss):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
-        setup_dist_lookup: bool = False,
+        add_nt_to_vocab: bool = True,
+        digit_nt_only: bool = True,
         squash_factor: Optional[float] = None,
     ):
         """
@@ -213,15 +235,20 @@ class NTLoss(AbstractNTLoss):
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
-            setup_dist_lookup: Whether to setup a distance lookup matrix during initialisation.
+            add_nt_to_vocab: Whether to ensure at least all digits are in the vocab. 
+                Defaults to True
+            digit_nt_only: Whether to ensure only digit tokens are considered number tokens, 
+                stabalizing training with NTL. Defaults to True.
             squash: The optional squashing factor for the NTL.
         """
-        super().__init__(tokenizer=tokenizer)
+        super().__init__(
+            tokenizer=tokenizer,
+            add_nt_to_vocab=add_nt_to_vocab,
+            digit_nt_only=digit_nt_only,
+        )
 
-        self.setup_dist_lookup = setup_dist_lookup
         self.squash_factor = squash_factor
-        if setup_dist_lookup or isinstance(squash_factor, Number):
-            self.setup_distance_lookup(squash_factor)
+        self.setup_distance_lookup(squash_factor)
 
     def setup_distance_lookup(
         self,
@@ -315,9 +342,7 @@ class NTLoss(AbstractNTLoss):
         label_mask = (
             loss_mask[valid_positions]
             if loss_mask is not None
-            else torch.ones(y.size(), dtype=logits.dtype, device=labels.device)[
-                valid_positions
-            ]
+            else torch.ones_like(labels, dtype=logits.dtype)[valid_positions]
         )
 
         # If no digit tokens in batch, or total of the relevant loss_mask is zero, no need for upcoming calculations
@@ -325,9 +350,9 @@ class NTLoss(AbstractNTLoss):
             torch.count_nonzero(label_mask) == 0
         ):
             if (reduction == "mean") | (reduction == "sum"):
-                loss = torch.tensor(0, dtype=labels.dtype, device=labels.device)
+                loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
-                loss = torch.zeros_like(valid_positions)
+                loss = torch.zeros_like(labels, dtype=logits.dtype)
             else:
                 raise ValueError(f"{reduction} is not a valid value for reduction")
 
@@ -338,13 +363,10 @@ class NTLoss(AbstractNTLoss):
         nt_logits = logits[:, :, self.is_number_token]
         softmax_probs = F.softmax(nt_logits, dim=-1)
 
-        # compute absolute difference between the true numbers and all possible number values
-        if self.setup_dist_lookup or isinstance(self.squash_factor, Number):
-            abs_diff = self.dist_lookup[self.vocab_to_dist_idx[labels[valid_positions]]]
-        else:
-            abs_diff = torch.abs(
-                y[valid_positions].unsqueeze(-1) - self.number_values_dense
-            )
+        # get distance between the true numbers and all possible number values from lookup table
+        abs_diff = self.dist_lookup.to(device=labels.device)[
+            self.vocab_to_dist_idx.to(device=labels.device)[labels[valid_positions]]
+        ]
 
         # loss is the absolute difference weighted by the softmax probs
         loss = (abs_diff * softmax_probs[valid_positions]).sum(dim=-1)
