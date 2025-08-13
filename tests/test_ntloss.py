@@ -302,7 +302,7 @@ def test_logit_scaling(loss_class, logit_builder):
         expected = torch.Tensor(
             sorted(range(10), key=lambda j: (abs(j - i), j)) + [10],
         ).long()
-        breakpoint()
+        
         if i == 10:
             assert torch.allclose(
                 losses[i, :], torch.zeros_like(losses[i, :]), atol=1e-8
