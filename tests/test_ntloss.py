@@ -256,3 +256,53 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
     assert torch.all(losses <= squash_factor), (
         "Loss should be smaller or equal to the squashing factor, if this is set."
     )
+
+
+@pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
+@pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
+def test_logit_scaling(loss_class, logit_builder):
+    loss_fn = loss_class(TOKENIZER, weight_using_logits=True)
+    ref_tokens = [str(i) for i in range(10)] + ["A"]
+    ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
+
+    # Make sure max_dist is set up correctly for regularization
+    assert loss_fn.max_dist > 0, (
+        "loss_fn.max_dist is not set up correctly"
+    )
+
+    # Guard: make sure all required tokens exist in the vocab
+    assert all(i is not None and i >= 0 for i in ref_ids), "Missing token id"
+
+    losses = torch.zeros(len(ref_ids), len(ref_ids), dtype=torch.float32)
+    for i, (gt_token, gt_token_id) in enumerate(zip(ref_tokens, ref_ids)):
+        labels = torch.tensor([[gt_token_id]], dtype=torch.long)
+        for peak_idx, peak_id in enumerate(ref_ids):
+            logits = logit_builder(ref_ids, peak_id, peak_idx)
+            loss = loss_fn(logits, labels)
+            if loss_class == NTLoss:
+                print(gt_token, TOKENIZER.convert_ids_to_tokens(peak_id), loss)
+            losses[i, peak_idx] = loss.item()
+
+        # Ensure that if GT is number and mass is on text, loss is at least as
+        # high as for worst number prediction: should be the case for weighted NT loss.
+        mins = torch.argsort(losses[i, :], dim=0)
+        expected = torch.Tensor(
+            sorted(range(10), key=lambda j: (abs(j - i), j)) + [10],
+        ).long()
+        breakpoint()
+        if i == 10:
+            assert torch.allclose(
+                losses[i, :], torch.zeros_like(losses[i, :]), atol=1e-8
+            ), "Loss should be zero when the ground-truth token is non-numeric."
+        else:
+            assert torch.equal(mins, expected), (
+                "For a digit ground truth, loss must be minimal when the distribution "
+                "peaks over the same digit."
+            )
+            assert torch.all(losses[i, expected[-2]] <= losses[i, -1]), (
+                "For a digit ground truth and mass concentration on text, weighted loss "
+                "should be at least as high as for worst number prediction."
+            )
+
+    assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
+
