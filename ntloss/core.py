@@ -18,7 +18,6 @@ class AbstractNTLoss(ABC):
         add_nt_to_vocab: bool = True,
         digit_nt_only: bool = True,
         weight_using_logits: bool = False,
-        reg_factor: float = 1.0,
     ):
         """
         NTL constructor.
@@ -31,8 +30,6 @@ class AbstractNTLoss(ABC):
                 stabalizing training with NTL. Defaults to True.
             weight_using_logits: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to False.
-            reg_factor: The regularization factor to apply to the computed CE loss.
-                Defaults to 1.0, i.e. no regularization.
 
         """
         super().__init__()
@@ -40,9 +37,10 @@ class AbstractNTLoss(ABC):
         self.add_nt_to_vocab = add_nt_to_vocab
         self.digit_nt_only = digit_nt_only
         self.weight_using_logits = weight_using_logits
-        self.reg_factor = reg_factor
 
         self.setup_number_tokens()
+
+        self.max_dist = torch.tensor(0.0)
 
     def setup_number_tokens(self):
         """Setting up attributes needed by NT loss"""
@@ -83,6 +81,40 @@ class AbstractNTLoss(ABC):
         """Alias to self.forward"""
         return self.forward(*args, **kwargs)
 
+    def apply_weight_nt_logits(
+        self,
+        logits: Tensor,
+        loss: Tensor,
+        valid_positions: Tensor,
+    ) -> Tensor: 
+        """
+        Scale the NT loss element-wise using the logit weight on number tokens.
+
+        Args:
+            logits: Tensor of shape BS x T x V
+            loss: 1D Tensor of size BS*NT with the computed NT losses
+            valid_positions: Tensor of shape BS x T indicating for which tokens 
+                the NT loss should be computed
+        
+        Returns:
+            A 1D Tensor of size BS*NT with the scaled NT losses
+        
+        """
+    
+        # Take softmax over logits of all tokens in vocab and compute NT logit weight
+        softmax_probs_all = F.softmax(logits, dim=-1)
+        self.nt_logit_weight = torch.sum(
+            softmax_probs_all[:, :, self.is_number_token], dim=-1
+        )[valid_positions]
+
+        # Apply weights for NTL element-wise
+        loss *= self.nt_logit_weight
+
+        # Apply regularization
+        loss += 1.01 * self.max_dist.to(dtype=loss.dtype, device=loss.device) * (1 - self.nt_logit_weight)
+
+        return loss
+
 
 class NTLossDotProduct(AbstractNTLoss):
     """Class for NT losses that produce a token-wise numerical output"""
@@ -93,7 +125,6 @@ class NTLossDotProduct(AbstractNTLoss):
         add_nt_to_vocab: bool = True,
         digit_nt_only: bool = True,
         weight_using_logits: bool = False,
-        reg_factor: float = 1.0,
         loss_function: Callable = F.mse_loss,
     ):
         """
@@ -107,8 +138,6 @@ class NTLossDotProduct(AbstractNTLoss):
                 stabalizing training with NTL. Defaults to True.
             weight_using_logits: Whether to scale the NTL using the logit weight on 
                 number tokens. Defaults to False.
-            reg_factor: The regularization factor to apply to the computed CE loss.
-                Defaults to 1.0, i.e. no regularization.
             loss_function: Function to apply on the delta between the ground truth number
                 and the obtained dot product (nt-probs * token-values).
 
@@ -120,6 +149,25 @@ class NTLossDotProduct(AbstractNTLoss):
             weight_using_logits=weight_using_logits,
         )
         self.loss_function = loss_function
+
+        self.setup_max_dist()
+
+    def setup_max_dist(self):
+        """
+        Set up the maximum distance between the number tokens based on the selected loss function.
+        """
+        
+        # Extract the number token values and get the minimum and maximum
+        vals = self.number_values_dense.unsqueeze(0)
+        max_val = vals.max()
+        min_val = vals.min()
+
+        # Compute the largest value the loss function used in NT loss computation can get
+        # Make sure to account for possibility of assymetrical loss function
+        self.max_dist = torch.maximum(
+            torch.abs(self.loss_function(min_val, max_val)),
+            torch.abs(self.loss_function(max_val, min_val))
+        )
 
     def forward(
         self,
@@ -187,16 +235,13 @@ class NTLossDotProduct(AbstractNTLoss):
         # Apply specified loss function to y and yhat
         loss = self.loss_function(yhat, y[valid_positions], reduction="none")
 
-        # If weight_using_logits: compute weights for NTL and CE based on logits
+        # If weight_using_logits: compute weights for NTL based on logits
         if self.weight_using_logits:
-            # Take softmax over logits of all tokens in vocab and compute NT logit weight
-            softmax_probs_all = F.softmax(logits, dim=-1)
-            self.nt_logit_weight = torch.sum(
-                softmax_probs_all[:, :, self.is_number_token], dim=-1
-            )[valid_positions]
-
-            # Apply weights for NTL element-wise
-            loss *= self.nt_logit_weight
+            loss = self.apply_weight_nt_logits(
+                logits=logits,
+                loss=loss,
+                valid_positions=valid_positions
+            )
 
         if reduction == "mean":
             # Mean pooling (weighted by loss mask)
@@ -228,6 +273,7 @@ class NTLoss(AbstractNTLoss):
         tokenizer: PreTrainedTokenizer,
         add_nt_to_vocab: bool = True,
         digit_nt_only: bool = True,
+        weight_using_logits: bool = False,
         squash_factor: Optional[float] = None,
     ):
         """
@@ -239,12 +285,15 @@ class NTLoss(AbstractNTLoss):
                 Defaults to True
             digit_nt_only: Whether to ensure only digit tokens are considered number tokens, 
                 stabalizing training with NTL. Defaults to True.
-            squash: The optional squashing factor for the NTL.
+            weight_using_logits: Whether to scale the NTL using the logit weight on 
+                number tokens. Defaults to False.
+            squash_factor: The optional squashing factor for the NTL.
         """
         super().__init__(
             tokenizer=tokenizer,
             add_nt_to_vocab=add_nt_to_vocab,
             digit_nt_only=digit_nt_only,
+            weight_using_logits=weight_using_logits,
         )
 
         self.squash_factor = squash_factor
@@ -299,6 +348,7 @@ class NTLoss(AbstractNTLoss):
 
         self.vocab_to_dist_idx = vocab_to_dist_idx
         self.dist_lookup = lookup
+        self.max_dist = lookup.max()
 
         logger.info(f"Done setting up the distance lookup table{additional_log_info}")
 
@@ -370,6 +420,14 @@ class NTLoss(AbstractNTLoss):
 
         # loss is the absolute difference weighted by the softmax probs
         loss = (abs_diff * softmax_probs[valid_positions]).sum(dim=-1)
+
+        # If weight_using_logits: compute weights for NTL based on logits
+        if self.weight_using_logits:
+            loss = self.apply_weight_nt_logits(
+                logits=logits,
+                loss=loss,
+                valid_positions=valid_positions
+            )
 
         if reduction == "mean":
             # Mean pooling (weighted by loss mask)
