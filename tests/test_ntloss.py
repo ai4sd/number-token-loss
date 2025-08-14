@@ -143,7 +143,7 @@ def test_correct_minimum(loss_class, logit_builder):
         None,
         random.shuffle(list((range(0, 10, 2)))),
         random.shuffle(list(range(0, 10, 2)) + [100]),
-        random.shuffle(range(0, 100, 10)),
+        random.shuffle(list(range(0, 100, 10))),
     ],
 )
 @pytest.mark.parametrize("loss_class", [NTLoss])
