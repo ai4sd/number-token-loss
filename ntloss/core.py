@@ -15,8 +15,7 @@ class AbstractNTLoss(ABC):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
-        add_nt_to_vocab: bool = True,
-        digit_nt_only: bool = True,
+        digit_level: bool = True,
         weight_using_logits: bool = False,
     ):
         """
@@ -24,9 +23,7 @@ class AbstractNTLoss(ABC):
 
         Args:
             tokenizer: Standard HF tokenizer
-            add_nt_to_vocab: Whether to ensure at least all digits are in the vocab.
-                Defaults to True
-            digit_nt_only: Whether to ensure only digit tokens are considered number tokens,
+            digit_level: Whether to ensure only digits are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
             weight_using_logits: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to False.
@@ -34,8 +31,7 @@ class AbstractNTLoss(ABC):
         """
         super().__init__()
         self.tokenizer = tokenizer
-        self.add_nt_to_vocab = add_nt_to_vocab
-        self.digit_nt_only = digit_nt_only
+        self.digit_level = digit_level
         self.weight_using_logits = weight_using_logits
 
         self.setup_number_tokens()
@@ -47,7 +43,7 @@ class AbstractNTLoss(ABC):
 
         # Add digits to vocab if not there yet.
         vocab_size = len(self.tokenizer)
-        if self.add_nt_to_vocab:
+        if self.digit_level:
             new_tokens = self.tokenizer.add_tokens(list(map(str, range(10))))
         if vocab_size < len(self.tokenizer) and new_tokens > 0:
             logger.warning(f"Added {new_tokens} new tokens for number token loss")
@@ -57,16 +53,23 @@ class AbstractNTLoss(ABC):
         # Try to convert each token to a float after stripping the space prefix
         for token, id in vocab.items():
             if is_number(token, finite=True):
-                if self.digit_nt_only:
+                if self.digit_level:
                     # NOTE: This check ensures number token value only occurs for digits, not for multi-digit numbers (123)
                     # This stabilizes training with NTL. Can be altered though, see paper experiments.
-                    if -1 <= float(token) <= 9 and len(token.lstrip(" ")) == 1:
+                    if (
+                        token.strip().isascii()  # Exclude tokens that are numbers in other languages like ႘
+                        and -1 <= float(token) <= 9
+                        and len(token.lstrip(" ")) == 1
+                    ):
                         self.number_values[id] = float(token)
                 else:
                     self.number_values[id] = float(token)
 
         self.is_number_token = ~torch.isnan(self.number_values)
         self.number_values_dense = self.number_values[self.is_number_token]
+
+        if self.digit_level:
+            assert len(self.number_values_dense) == 10, "If digit level "
 
     @abstractmethod
     def forward(
@@ -126,8 +129,7 @@ class NTLossDotProduct(AbstractNTLoss):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
-        add_nt_to_vocab: bool = True,
-        digit_nt_only: bool = True,
+        digit_level: bool = True,
         weight_using_logits: bool = False,
         loss_function: Callable = F.mse_loss,
     ):
@@ -136,9 +138,7 @@ class NTLossDotProduct(AbstractNTLoss):
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
-            add_nt_to_vocab: Whether to ensure at least all digits are in the vocab.
-                Defaults to True
-            digit_nt_only: Whether to ensure only digit tokens are considered number tokens,
+            digit_level: Whether to ensure only digit tokens are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
             weight_using_logits: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to False.
@@ -148,8 +148,7 @@ class NTLossDotProduct(AbstractNTLoss):
         """
         super().__init__(
             tokenizer=tokenizer,
-            add_nt_to_vocab=add_nt_to_vocab,
-            digit_nt_only=digit_nt_only,
+            digit_level=digit_level,
             weight_using_logits=weight_using_logits,
         )
         self.loss_function = loss_function
@@ -274,8 +273,7 @@ class NTLoss(AbstractNTLoss):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
-        add_nt_to_vocab: bool = True,
-        digit_nt_only: bool = True,
+        digit_level: bool = True,
         weight_using_logits: bool = False,
         squash_factor: Optional[float] = None,
     ):
@@ -284,9 +282,7 @@ class NTLoss(AbstractNTLoss):
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
-            add_nt_to_vocab: Whether to ensure at least all digits are in the vocab.
-                Defaults to True
-            digit_nt_only: Whether to ensure only digit tokens are considered number tokens,
+            digit_level: Whether to ensure only digit tokens are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
             weight_using_logits: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to False.
@@ -294,8 +290,7 @@ class NTLoss(AbstractNTLoss):
         """
         super().__init__(
             tokenizer=tokenizer,
-            add_nt_to_vocab=add_nt_to_vocab,
-            digit_nt_only=digit_nt_only,
+            digit_level=digit_level,
             weight_using_logits=weight_using_logits,
         )
 
@@ -310,6 +305,7 @@ class NTLoss(AbstractNTLoss):
         Set up a lookup table for the distances between the number tokens.
         Use squash_factor to control by what factor the farthest number token is worse than the closest, incorrect number token.
         If not squash_factor is not set: with 10 number tokens (0-9), the squashing factor is 9.
+        NOTE: With a squashing factor of 1, this basically collapses to cross entropy.
 
         Args:
             squash_factor: The optional squashing factor used.
@@ -318,8 +314,10 @@ class NTLoss(AbstractNTLoss):
 
         # Get token ids for number tokens
         num_ids = torch.nonzero(self.is_number_token, as_tuple=True)[0]
-        # Create mapping from number token ids to their index in order of appearance in vocab
+        # Create mapping from number token ids to their index in order of appearance in vocab:
+        # e.g. token "3" -> id 519 -> dist_idx 1, then abs dist to 3 for other NT values will be found in row/column 1
         vocab_to_dist_idx = torch.full((len(self.tokenizer),), -1, dtype=torch.long)
+        # Use arange to ensure order of appearance 
         vocab_to_dist_idx[num_ids] = torch.arange(num_ids.size(0), dtype=torch.long)
 
         # Build NxN abs-diff matrix
