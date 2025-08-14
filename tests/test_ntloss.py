@@ -1,4 +1,5 @@
 import math
+import random
 
 import numpy as np
 import pytest
@@ -136,6 +137,73 @@ def test_correct_minimum(loss_class, logit_builder):
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
 
+@pytest.mark.parametrize(
+    "custom_vocab_li",
+    [
+        None,
+        random.shuffle(list((range(0, 10, 2)))),
+        random.shuffle(list(range(0, 10, 2)) + [100]),
+        random.shuffle(range(0, 100, 10)),
+    ],
+)
+@pytest.mark.parametrize("loss_class", [NTLoss])
+@pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
+@pytest.mark.parametrize("squash_factor", [0.5, 1, 2, 20])
+def test_setup_distance_lookup(custom_vocab_li, loss_class, logit_builder, squash_factor):
+    # Make sure mapping of order of NTs in vocab is maintained for dist_matrix
+    # Make sure that the distance matrix doesn't make assumptions about order of NTs
+    
+    if custom_vocab_li is not None:
+        nums_in_vocab = custom_vocab_li
+        custom_vocab = dict([(str(n), i) for i, n in enumerate(random.shuffle(list((range(0, 10, 2)))))])
+        if "A" not in custom_vocab:
+            custom_vocab["A"] = len(custom_vocab)
+        tok = Tokenizer(models.WordLevel(vocab=custom_vocab))
+        tokenizer = PreTrainedTokenizerFast(tokenizer_object=tok)
+    else:
+        nums_in_vocab = list(range(10))
+        tokenizer = TOKENIZER
+
+    loss_fn = loss_class(tokenizer, digit_level=False)
+
+    num_vals = loss_fn.number_values_dense
+    
+    assert loss_fn.dist_lookup.shape[0] == loss_fn.dist_lookup.shape[1], (
+        "The distance lookup matrix should be symmetric."
+    )
+    assert loss_fn.dist_lookup.shape[0] == len(num_vals), (
+        "The distance lookup matrix should contain distances for all number tokens "
+        "in vocab."
+    )
+
+    # Check whether value at (i,j) in matrix is the expected value: the absolute 
+    # difference between num_vals[i] and num_vals[j]
+    for i, i_val in enumerate(num_vals):
+        for j, j_val in enumerate(num_vals):
+            assert loss_fn.dist_lookup[i, j] == abs(i_val - j_val), (
+                f"Value in cell {i}, {j} of the distance lookup matrix is not the "
+                f"expected value ({loss_fn.dist_lookup[i, j]} vs {abs(i_val - j_val)})."
+            )
+
+    ref_tokens = [str(i) for i in nums_in_vocab]
+    ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
+
+    # Check whether all num_ids have a mapping from idx in vocab to idx in dist lookup
+    num_ids = torch.where(loss_fn.vocab_to_dist_idx != -1)[0]
+    for i in ref_ids:
+        assert i in num_ids, f"Couldn't find {i} in vocab_to_dist_idx mapping."
+
+    # Check whether mapping from vocab to the index in dist lookup matrix is correct
+    for i, ref_idx in enumerate(ref_ids):
+        dist_idx = loss_fn.vocab_to_dist_idx[ref_idx]
+
+        for j, j_val in enumerate(num_vals):
+            i_val = float(ref_tokens[i])
+            print(i_val, j_val, loss_fn.dist_lookup[dist_idx, j])
+            assert loss_fn.dist_lookup[dist_idx, j] == abs(i_val - j_val), (
+                f"Value in cell {dist_idx}, {j} of the distance lookup matrix is not the "
+                f"expected value ({loss_fn.dist_lookup[dist_idx, j]} vs {abs(i_val - j_val)})."
+            )
 
 @pytest.mark.parametrize("loss_class", [NTLoss])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
