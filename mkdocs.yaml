@@ -1,24 +1,131 @@
-site_name: ntloss
-markdown_extensions:
-  - pymdownx.highlight:
-      anchor_linenums: true
-      line_spans: __span
-      pygments_lang_class: true
-  - pymdownx.inlinehilite
-  - pymdownx.snippets
-  - pymdownx.superfences
+site_name: Number Token Loss
+site_description: Documentation for the `ntloss` python package
+# site_url :
+# Repository
+repo_name: AI4SD/number-token-loss
+repo_url: https://github.com/AI4SD/number-token-loss
+edit_uri: edit/main/docs/
+
+# Theme
 theme:
   name: material
+  font:
+    text: IBM Plex Sans
+    code: IBM Plex Mono
+  # logo: favicon.png
+  # favicon: favicon.png
   features:
-    - navigation.instant
+    - content.code.annotate
+    # - content.tabs.link
+    - content.tooltips
+    # - header.autohide
+    # - navigation.expand
+    - navigation.indexes
+    # - navigation.instant
+    - navigation.sections
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+    - toc.integrate
+  palette:
+    - scheme: default
+      primary: black
+      accent: blue
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      accent: blue
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to light mode
+  language: en
+
+nav:
+  - Overview: index.md
+  - API Documentation:
+      - Loss Classes: api/core.md
+      - Utilities: api/utils.md
+
+
+# Copyright
+copyright: MIT License
+
+# Customization
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/AI4SD/number-token-loss
+  generator: false
+
+# Plugins
 plugins:
   - search
   - mkdocstrings:
+      default_handler: python
       handlers:
         python:
-          paths: ["."]
-nav:
-  - Home: index.md
-  - API:
-      - ntloss: reference/ntloss.md
+          options:
+            show_submodules: true
+            heading_level: 2
+            group_by_category: true
+            members_order: source
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            render_typehint_in_signature: true
+            show_root_heading: true
+            show_signature_annotations: true
+            show_source: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - md_in_html
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - meta
+  - toc:
+      permalink: true
+      # toc_depth: 2
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra_css:
+  - css/nav-code-style.css
+  - css/mkdocstrings-chips.css
+extra_javascript:
+  - js/termynal.js
+  - js/custom.js
