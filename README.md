@@ -5,11 +5,12 @@
 
 
 [![Paper](https://img.shields.io/badge/Paper-ICML-darkgreen.svg)](https://arxiv.org/abs/2411.02083)
-[![Landing](https://img.shields.io/badge/GitHub-Pages-blue.svg)](https://tum-ai.github.io/number-token-loss/)
+[![Landing](https://img.shields.io/badge/Landing-Page-blue.svg)](https://tum-ai.github.io/number-token-loss/)
 [![Demo](https://img.shields.io/badge/🤗-Demo-yellow.svg)](https://huggingface.co/spaces/jannisborn/NumberTokenLoss)
 [![CI](https://github.com/AI4SD/number-token-loss/actions/workflows/ci.yaml/badge.svg)](https://github.com/AI4SD/number-token-loss/actions/workflows/ci.yaml)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![PyPI](https://badge.fury.io/py/ntloss.svg)](https://badge.fury.io/py/ntloss)
+[![Docs](https://github.com/AI4SD/number-token-loss/actions/workflows/docs.yaml/badge.svg)](https://ai4sd.github.io/number-token-loss/)
 [![Downloads](https://static.pepy.tech/badge/ntloss)](https://pepy.tech/project/ntloss)
 
 *`ntloss` is a PyPI package of the "Number Token Loss" for language models. A regression-like loss that improves LLM performance on math tasks. Follows [Regress, Don't Guess, ICML 2025](https://arxiv.org/abs/2411.02083)*
@@ -22,8 +23,7 @@
 ## 📖 Overview
 This repo maintains the code for the `ntloss` [PyPI package](https://pypi.org/project/ntloss/)
 
-- 📄 **Paper source code**: [Regress, Don't Guess – A Regression-like Loss on Number Tokens for Language Models](https://github.com/tum-ai/number-token-loss)
-
+- 📄 **Paper source code**: [Regress, Don't Guess – ICML 2025](https://github.com/tum-ai/number-token-loss)
 - 📄 **Paper**: [Regress, Don't Guess – A Regression-like Loss on Number Tokens for Language Models](https://arxiv.org/abs/2411.02083)
 - 🌐 **Project Page**: [https://tum-ai.github.io/number-token-loss/](https://tum-ai.github.io/number-token-loss/)
 - 🎮 **Interactive Demo**: [https://huggingface.co/spaces/jannisborn/NumberTokenLoss](https://huggingface.co/spaces/jannisborn/NumberTokenLoss)

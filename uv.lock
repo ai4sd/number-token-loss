@@ -549,6 +549,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "mkdocs-material" },
+    { name = "mkdocs-material-extensions" },
     { name = "mkdocstrings", extra = ["python"] },
     { name = "mypy" },
     { name = "pytest" },
@@ -565,6 +566,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "mkdocs-material", specifier = ">=9.6" },
+    { name = "mkdocs-material-extensions" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.24" },
     { name = "mypy", specifier = ">=1.17.1" },
     { name = "pytest", specifier = ">=7.0" },
