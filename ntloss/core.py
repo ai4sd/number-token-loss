@@ -62,7 +62,7 @@ class AbstractNTLoss(ABC):
         self.number_values_dense = self.number_values[self.is_number_token]
 
         if self.digit_level:
-            assert len(self.number_values_dense) == 10, "If digit level "
+            assert len(self.number_values_dense) == 10, f"You requested digit-level but more than 10 number tokens were identified: {self.number_values_dense}"
 
     @abstractmethod
     def forward(
