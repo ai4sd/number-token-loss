@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from numbers import Number
 from typing import Callable, Optional
 
 import torch
@@ -11,24 +12,33 @@ from .utils import is_number
 
 
 class AbstractNTLoss(ABC):
-    def __init__(self, tokenizer: PreTrainedTokenizer):
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizer,
+        digit_level: bool = True,
+    ):
         """
         NTL constructor.
 
         Args:
-            tokenizer: standard HF tokenizer
+            tokenizer: Standard HF tokenizer
+            digit_level: Whether to ensure only digits are considered number tokens,
+                stabalizing training with NTL. Defaults to True.
 
         """
         super().__init__()
         self.tokenizer = tokenizer
+        self.digit_level = digit_level
         self.setup_number_tokens()
 
     def setup_number_tokens(self):
         """Setting up attributes needed by NT loss"""
 
         # Add digits to vocab if not there yet.
-        new_tokens = self.tokenizer.add_tokens(list(map(str, range(10))))
-        if new_tokens > 0:
+        vocab_size = len(self.tokenizer)
+        if self.digit_level:
+            new_tokens = self.tokenizer.add_tokens(list(map(str, range(10))))
+        if vocab_size < len(self.tokenizer) and new_tokens > 0:
             logger.warning(f"Added {new_tokens} new tokens for number token loss")
         vocab = self.tokenizer.get_vocab()
         self.number_values = torch.full((len(vocab),), float("nan"))
@@ -36,13 +46,23 @@ class AbstractNTLoss(ABC):
         # Try to convert each token to a float after stripping the space prefix
         for token, id in vocab.items():
             if is_number(token, finite=True):
-                # NOTE: This check ensures number token value only occurs for digits, not for multi-digit numbers (123)
-                # This stabilizes training with NTL. Can be altered though, see paper experiments.
-                if -1 <= float(token) <= 9 and len(token.lstrip(" ")) == 1:
+                if self.digit_level:
+                    # NOTE: This check ensures number token value only occurs for digits, not for multi-digit numbers (123)
+                    # This stabilizes training with NTL. Can be altered though, see paper experiments.
+                    if (
+                        token.strip().isascii()  # Exclude tokens that are numbers in other languages like ႘
+                        and -1 <= float(token) <= 9
+                        and len(token.lstrip(" ")) == 1
+                    ):
+                        self.number_values[id] = float(token)
+                else:
                     self.number_values[id] = float(token)
 
         self.is_number_token = ~torch.isnan(self.number_values)
         self.number_values_dense = self.number_values[self.is_number_token]
+
+        if self.digit_level:
+            assert len(self.number_values_dense) == 10, f"You requested digit-level but more than 10 number tokens were identified: {self.number_values_dense}"
 
     @abstractmethod
     def forward(
@@ -62,18 +82,26 @@ class NTLossDotProduct(AbstractNTLoss):
     """Class for NT losses that produce a token-wise numerical output"""
 
     def __init__(
-        self, tokenizer: PreTrainedTokenizer, loss_function: Callable = F.mse_loss
+        self,
+        tokenizer: PreTrainedTokenizer,
+        digit_level: bool = True,
+        loss_function: Callable = F.mse_loss,
     ):
         """
         NTL constructor.
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
+            digit_level: Whether to ensure only digit tokens are considered number tokens,
+                stabalizing training with NTL. Defaults to True.
             loss_function: Function to apply on the delta between the ground truth number
                 and the obtained dot product (nt-probs * token-values).
 
         """
-        super().__init__(tokenizer=tokenizer)
+        super().__init__(
+            tokenizer=tokenizer,
+            digit_level=digit_level,
+        )
         self.loss_function = loss_function
 
     def forward(
@@ -113,9 +141,7 @@ class NTLossDotProduct(AbstractNTLoss):
         label_mask = (
             loss_mask[valid_positions]
             if loss_mask is not None
-            else torch.ones(y.size(), dtype=logits.dtype, device=labels.device)[
-                valid_positions
-            ]
+            else torch.ones_like(labels, dtype=logits.dtype)[valid_positions]
         )
 
         # If no digit tokens in batch, or total of the relevant loss_mask is zero, no need for upcoming calculations
@@ -123,9 +149,9 @@ class NTLossDotProduct(AbstractNTLoss):
             torch.count_nonzero(label_mask) == 0
         ):
             if (reduction == "mean") | (reduction == "sum"):
-                loss = torch.tensor(0, dtype=labels.dtype, device=labels.device)
+                loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
-                loss = torch.zeros_like(valid_positions)
+                loss = torch.zeros_like(labels, dtype=logits.dtype)
             else:
                 raise ValueError(f"{reduction} is not a valid value for reduction")
 
@@ -170,6 +196,81 @@ class NTLossDotProduct(AbstractNTLoss):
 class NTLoss(AbstractNTLoss):
     """Class for Wasserstein-based NTLoss. This is the default as per our paper."""
 
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizer,
+        digit_level: bool = True,
+        squash_factor: Optional[float] = None,
+    ):
+        """
+        NTL constructor.
+
+        Args:
+            tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
+            digit_level: Whether to ensure only digit tokens are considered number tokens,
+                stabalizing training with NTL. Defaults to True.
+            squash: The optional squashing factor for the NTL.
+        """
+        super().__init__(tokenizer=tokenizer, digit_level=digit_level)
+
+        self.squash_factor = squash_factor
+        self.setup_distance_lookup(squash_factor)
+
+    def setup_distance_lookup(
+        self,
+        squash_factor: Optional[float] = None,
+    ):
+        """
+        Set up a lookup table for the distances between the number tokens.
+        Use squash_factor to control by what factor the farthest number token is worse than the closest, incorrect number token.
+        If not squash_factor is not set: with 10 number tokens (0-9), the squashing factor is 9.
+        NOTE: With a squashing factor of 1, this basically collapses to cross entropy.
+
+        Args:
+            squash_factor: The optional squashing factor used.
+
+        """
+
+        # Get token ids for number tokens
+        num_ids = torch.nonzero(self.is_number_token, as_tuple=True)[0]
+        # Create mapping from number token ids to their index in order of appearance in vocab:
+        # e.g. token "3" -> id 519 -> dist_idx 1, then abs dist to 3 for other NT values will be found in row/column 1
+        vocab_to_dist_idx = torch.full((len(self.tokenizer),), -1, dtype=torch.long)
+        # Use arange to ensure order of appearance 
+        vocab_to_dist_idx[num_ids] = torch.arange(num_ids.size(0), dtype=torch.long)
+
+        # Build NxN abs-diff matrix
+        vals = self.number_values_dense.unsqueeze(0)  # (1 x N)
+        diff = torch.abs(vals - vals.t())  # (N x N)
+
+        if isinstance(squash_factor, Number):
+            assert squash_factor > 1, (
+                f"The squash factor can't be equal to or smaller than 1, please use a different squashing factor than {squash_factor}"
+            )
+
+            # Mask out zeros to find the smallest nonzero diff
+            inf = torch.finfo(diff.dtype).max
+            diff_nonzero = diff.masked_fill(diff == 0, inf)
+            global_min_nz = diff_nonzero.min()
+            # Find largest diff
+            global_max = diff.max()
+
+            # Compute scaling factor based on indicated squash factor
+            scale = (squash_factor - 1) / (global_max - global_min_nz)
+            # Scale the absolute differences using scaling factor
+            lookup = 1 + (diff - global_min_nz) * scale
+            lookup[diff == 0] = 0.0
+
+            additional_log_info = f", used a squashing factor of {squash_factor}."
+        else:
+            lookup = diff
+            additional_log_info = ""
+
+        self.vocab_to_dist_idx = vocab_to_dist_idx
+        self.dist_lookup = lookup
+
+        logger.info(f"Done setting up the distance lookup table{additional_log_info}")
+
     def forward(
         self,
         logits: Tensor,
@@ -210,9 +311,7 @@ class NTLoss(AbstractNTLoss):
         label_mask = (
             loss_mask[valid_positions]
             if loss_mask is not None
-            else torch.ones(y.size(), dtype=logits.dtype, device=labels.device)[
-                valid_positions
-            ]
+            else torch.ones_like(labels, dtype=logits.dtype)[valid_positions]
         )
 
         # If no digit tokens in batch, or total of the relevant loss_mask is zero, no need for upcoming calculations
@@ -220,9 +319,9 @@ class NTLoss(AbstractNTLoss):
             torch.count_nonzero(label_mask) == 0
         ):
             if (reduction == "mean") | (reduction == "sum"):
-                loss = torch.tensor(0, dtype=labels.dtype, device=labels.device)
+                loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
-                loss = torch.zeros_like(valid_positions)
+                loss = torch.zeros_like(labels, dtype=logits.dtype)
             else:
                 raise ValueError(f"{reduction} is not a valid value for reduction")
 
@@ -233,10 +332,10 @@ class NTLoss(AbstractNTLoss):
         nt_logits = logits[:, :, self.is_number_token]
         softmax_probs = F.softmax(nt_logits, dim=-1)
 
-        # compute absolute difference between the true numbers and all possible number values
-        abs_diff = torch.abs(
-            y[valid_positions].unsqueeze(-1) - self.number_values_dense
-        )
+        # get distance between the true numbers and all possible number values from lookup table
+        abs_diff = self.dist_lookup.to(device=labels.device)[
+            self.vocab_to_dist_idx.to(device=labels.device)[labels[valid_positions]]
+        ]
 
         # loss is the absolute difference weighted by the softmax probs
         loss = (abs_diff * softmax_probs[valid_positions]).sum(dim=-1)
