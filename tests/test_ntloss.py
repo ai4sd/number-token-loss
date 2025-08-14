@@ -169,7 +169,7 @@ def test_setup_distance_lookup(custom_vocab_li, loss_class, logit_builder, squas
     num_vals = loss_fn.number_values_dense
     
     assert loss_fn.dist_lookup.shape[0] == loss_fn.dist_lookup.shape[1], (
-        "The distance lookup matrix should be symmetric."
+        "The distance lookup matrix should be square."
     )
     assert loss_fn.dist_lookup.shape[0] == len(num_vals), (
         "The distance lookup matrix should contain distances for all number tokens "
