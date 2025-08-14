@@ -137,6 +137,7 @@ def test_correct_minimum(loss_class, logit_builder):
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
 
+
 @pytest.mark.parametrize(
     "custom_vocab_li",
     [
@@ -149,13 +150,17 @@ def test_correct_minimum(loss_class, logit_builder):
 @pytest.mark.parametrize("loss_class", [NTLoss])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 @pytest.mark.parametrize("squash_factor", [0.5, 1, 2, 20])
-def test_setup_distance_lookup(custom_vocab_li, loss_class, logit_builder, squash_factor):
+def test_setup_distance_lookup(
+    custom_vocab_li, loss_class, logit_builder, squash_factor
+):
     # Make sure mapping of order of NTs in vocab is maintained for dist_matrix
     # Make sure that the distance matrix doesn't make assumptions about order of NTs
-    
+
     if custom_vocab_li is not None:
         nums_in_vocab = custom_vocab_li
-        custom_vocab = dict([(str(n), i) for i, n in enumerate(random.shuffle(list((range(0, 10, 2)))))])
+        custom_vocab = dict(
+            [(str(n), i) for i, n in enumerate(random.shuffle(list((range(0, 10, 2)))))]
+        )
         if "A" not in custom_vocab:
             custom_vocab["A"] = len(custom_vocab)
         tok = Tokenizer(models.WordLevel(vocab=custom_vocab))
@@ -167,7 +172,7 @@ def test_setup_distance_lookup(custom_vocab_li, loss_class, logit_builder, squas
     loss_fn = loss_class(tokenizer, digit_level=False)
 
     num_vals = loss_fn.number_values_dense
-    
+
     assert loss_fn.dist_lookup.shape[0] == loss_fn.dist_lookup.shape[1], (
         "The distance lookup matrix should be square."
     )
@@ -176,7 +181,7 @@ def test_setup_distance_lookup(custom_vocab_li, loss_class, logit_builder, squas
         "in vocab."
     )
 
-    # Check whether value at (i,j) in matrix is the expected value: the absolute 
+    # Check whether value at (i,j) in matrix is the expected value: the absolute
     # difference between num_vals[i] and num_vals[j]
     for i, i_val in enumerate(num_vals):
         for j, j_val in enumerate(num_vals):
@@ -204,6 +209,7 @@ def test_setup_distance_lookup(custom_vocab_li, loss_class, logit_builder, squas
                 f"Value in cell {dist_idx}, {j} of the distance lookup matrix is not the "
                 f"expected value ({loss_fn.dist_lookup[dist_idx, j]} vs {abs(i_val - j_val)})."
             )
+
 
 @pytest.mark.parametrize("loss_class", [NTLoss])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
@@ -256,6 +262,7 @@ def test_correct_squashing(loss_class, logit_builder, squash_factor):
     assert torch.all(losses <= squash_factor), (
         "Loss should be smaller or equal to the squashing factor, if this is set."
     )
+
 
 @pytest.mark.parametrize(
     "custom_vocab",
@@ -334,6 +341,7 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
         "Loss should be smaller or equal to the squashing factor, if this is set."
     )
 
+
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 def test_logit_scaling(loss_class, logit_builder):
@@ -363,7 +371,7 @@ def test_logit_scaling(loss_class, logit_builder):
         expected = torch.Tensor(
             sorted(range(10), key=lambda j: (abs(j - i), j)) + [10],
         ).long()
-        
+
         if i == 10:
             assert torch.allclose(
                 losses[i, :], torch.zeros_like(losses[i, :]), atol=1e-8
@@ -379,5 +387,3 @@ def test_logit_scaling(loss_class, logit_builder):
             )
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
-
-
