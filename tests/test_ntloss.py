@@ -3,14 +3,15 @@ import math
 import numpy as np
 import pytest
 import torch
+from tokenizers import Tokenizer, models
 from torch import Tensor
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
-from tokenizers import Tokenizer, models
 
 from ntloss import NTLoss, NTLossDotProduct
 
 TOKENIZER = AutoTokenizer.from_pretrained("t5-small")
 VOCAB_SIZE = TOKENIZER.vocab_size
+
 
 def make_logits(token_logit_value_dicts):
     """
@@ -112,8 +113,7 @@ def test_correct_minimum(loss_class, logit_builder):
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx)
             loss = loss_fn(logits, labels)
-            if loss_class == NTLoss:
-                print(gt_token, TOKENIZER.convert_ids_to_tokens(peak_id), loss)
+
             losses[i, peak_idx] = loss.item()
 
         # TODO: Ensure that if GT is number and mass is on text, loss is at least as
@@ -189,12 +189,16 @@ def test_correct_squashing(loss_class, logit_builder, squash_factor):
         "Loss should be smaller or equal to the squashing factor, if this is set."
     )
 
-@pytest.mark.parametrize("custom_vocab", [
-    None,
-    dict([(str(n), i) for i, n in enumerate(range(0, 10, 2))]),
-    dict([(str(n), i) for i, n in enumerate(list(range(0, 10, 2)) + [100])]),
-    dict([(str(n), i) for i, n in enumerate(range(0, 100, 10))]),
-])
+
+@pytest.mark.parametrize(
+    "custom_vocab",
+    [
+        None,
+        dict([(str(n), i) for i, n in enumerate(range(0, 10, 2))]),
+        dict([(str(n), i) for i, n in enumerate(list(range(0, 10, 2)) + [100])]),
+        dict([(str(n), i) for i, n in enumerate(range(0, 100, 10))]),
+    ],
+)
 @pytest.mark.parametrize("loss_class", [NTLoss])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 @pytest.mark.parametrize("squash_factor", [0.5, 1, 2, 20])
@@ -214,14 +218,16 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
             AssertionError,
             match=r"The squash factor can't be equal to or smaller than 1*",
         ):
-            loss_fn = loss_class(tokenizer, add_nt_to_vocab=False, digit_nt_only=False, squash_factor=squash_factor)
+            loss_fn = loss_class(
+                tokenizer, digit_level=False, squash_factor=squash_factor
+            )
 
         return
 
-    loss_fn = loss_class(tokenizer, add_nt_to_vocab=False, digit_nt_only=False, squash_factor=squash_factor)
+    loss_fn = loss_class(tokenizer, digit_level=False, squash_factor=squash_factor)
     ref_tokens = [str(i) for i in range(10)] + ["A"]
     ref_ids = [tokenizer.convert_tokens_to_ids(t) for t in ref_tokens]
-    
+
     # Remove tokens not present in vocab from ref_tokens and ref_ids lists
     ref_tokens = [tok for i, tok in enumerate(ref_tokens) if ref_ids[i] is not None]
     ref_ids = [i for i in ref_ids if i is not None]
@@ -247,8 +253,6 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx, vocab_size)
             loss = loss_fn(logits, labels)
-            if loss_class == NTLoss:
-                print(gt_token, tokenizer.convert_ids_to_tokens(peak_id), loss)
             losses[i, peak_idx] = loss.item()
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"

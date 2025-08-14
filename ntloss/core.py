@@ -15,24 +15,20 @@ class AbstractNTLoss(ABC):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
-        add_nt_to_vocab: bool = True,
-        digit_nt_only: bool = True,
+        digit_level: bool = True,
     ):
         """
         NTL constructor.
 
         Args:
             tokenizer: Standard HF tokenizer
-            add_nt_to_vocab: Whether to ensure at least all digits are in the vocab. 
-                Defaults to True
-            digit_nt_only: Whether to ensure only digit tokens are considered number tokens, 
+            digit_level: Whether to ensure only digits are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
 
         """
         super().__init__()
         self.tokenizer = tokenizer
-        self.add_nt_to_vocab = add_nt_to_vocab
-        self.digit_nt_only = digit_nt_only
+        self.digit_level = digit_level
         self.setup_number_tokens()
 
     def setup_number_tokens(self):
@@ -40,7 +36,7 @@ class AbstractNTLoss(ABC):
 
         # Add digits to vocab if not there yet.
         vocab_size = len(self.tokenizer)
-        if self.add_nt_to_vocab:
+        if self.digit_level:
             new_tokens = self.tokenizer.add_tokens(list(map(str, range(10))))
         if vocab_size < len(self.tokenizer) and new_tokens > 0:
             logger.warning(f"Added {new_tokens} new tokens for number token loss")
@@ -50,10 +46,14 @@ class AbstractNTLoss(ABC):
         # Try to convert each token to a float after stripping the space prefix
         for token, id in vocab.items():
             if is_number(token, finite=True):
-                if self.digit_nt_only:
-                # NOTE: This check ensures number token value only occurs for digits, not for multi-digit numbers (123)
-                # This stabilizes training with NTL. Can be altered though, see paper experiments.
-                    if -1 <= float(token) <= 9 and len(token.lstrip(" ")) == 1:
+                if self.digit_level:
+                    # NOTE: This check ensures number token value only occurs for digits, not for multi-digit numbers (123)
+                    # This stabilizes training with NTL. Can be altered though, see paper experiments.
+                    if (
+                        token.strip().isascii()  # Exclude tokens that are numbers in other languages like ႘
+                        and -1 <= float(token) <= 9
+                        and len(token.lstrip(" ")) == 1
+                    ):
                         self.number_values[id] = float(token)
                 else:
                     self.number_values[id] = float(token)
@@ -81,8 +81,7 @@ class NTLossDotProduct(AbstractNTLoss):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
-        add_nt_to_vocab: bool = True,
-        digit_nt_only: bool = True,
+        digit_level: bool = True,
         loss_function: Callable = F.mse_loss,
     ):
         """
@@ -90,9 +89,7 @@ class NTLossDotProduct(AbstractNTLoss):
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
-            add_nt_to_vocab: Whether to ensure at least all digits are in the vocab. 
-                Defaults to True
-            digit_nt_only: Whether to ensure only digit tokens are considered number tokens, 
+            digit_level: Whether to ensure only digit tokens are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
             loss_function: Function to apply on the delta between the ground truth number
                 and the obtained dot product (nt-probs * token-values).
@@ -100,8 +97,7 @@ class NTLossDotProduct(AbstractNTLoss):
         """
         super().__init__(
             tokenizer=tokenizer,
-            add_nt_to_vocab=add_nt_to_vocab,
-            digit_nt_only=digit_nt_only,
+            digit_level=digit_level,
         )
         self.loss_function = loss_function
 
@@ -200,8 +196,7 @@ class NTLoss(AbstractNTLoss):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
-        add_nt_to_vocab: bool = True,
-        digit_nt_only: bool = True,
+        digit_level: bool = True,
         squash_factor: Optional[float] = None,
     ):
         """
@@ -209,17 +204,11 @@ class NTLoss(AbstractNTLoss):
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
-            add_nt_to_vocab: Whether to ensure at least all digits are in the vocab. 
-                Defaults to True
-            digit_nt_only: Whether to ensure only digit tokens are considered number tokens, 
+            digit_level: Whether to ensure only digit tokens are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
             squash: The optional squashing factor for the NTL.
         """
-        super().__init__(
-            tokenizer=tokenizer,
-            add_nt_to_vocab=add_nt_to_vocab,
-            digit_nt_only=digit_nt_only,
-        )
+        super().__init__(tokenizer=tokenizer, digit_level=digit_level)
 
         self.squash_factor = squash_factor
         self.setup_distance_lookup(squash_factor)
