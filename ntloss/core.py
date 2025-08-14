@@ -69,7 +69,9 @@ class AbstractNTLoss(ABC):
         self.number_values_dense = self.number_values[self.is_number_token]
 
         if self.digit_level:
-            assert len(self.number_values_dense) == 10, "If digit level "
+            assert len(self.number_values_dense) == 10, (
+                f"You requested digit-level but more than 10 number tokens were identified: {self.number_values_dense}"
+            )
 
     @abstractmethod
     def forward(
@@ -317,7 +319,7 @@ class NTLoss(AbstractNTLoss):
         # Create mapping from number token ids to their index in order of appearance in vocab:
         # e.g. token "3" -> id 519 -> dist_idx 1, then abs dist to 3 for other NT values will be found in row/column 1
         vocab_to_dist_idx = torch.full((len(self.tokenizer),), -1, dtype=torch.long)
-        # Use arange to ensure order of appearance 
+        # Use arange to ensure order of appearance
         vocab_to_dist_idx[num_ids] = torch.arange(num_ids.size(0), dtype=torch.long)
 
         # Build NxN abs-diff matrix

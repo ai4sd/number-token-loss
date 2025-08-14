@@ -257,7 +257,6 @@ def test_correct_squashing(loss_class, logit_builder, squash_factor):
         "Loss should be smaller or equal to the squashing factor, if this is set."
     )
 
-
 @pytest.mark.parametrize(
     "custom_vocab",
     [
@@ -335,7 +334,6 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
         "Loss should be smaller or equal to the squashing factor, if this is set."
     )
 
-
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 def test_logit_scaling(loss_class, logit_builder):
@@ -381,3 +379,5 @@ def test_logit_scaling(loss_class, logit_builder):
             )
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
+
+
