@@ -99,9 +99,33 @@ def test_ntloss_variants(loss_class, logits_dicts, label_tokens):
 
 
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
+@pytest.mark.parametrize("reweigh", [True, False])
+def test_differentiability(loss_class, reweigh):
+    loss_fn = loss_class(TOKENIZER, reweigh=reweigh)
+
+    ref_tokens = [str(i) for i in range(10)] + ["A"]
+    ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
+
+    gt_token_id = ref_ids[1]
+    p_token_id = ref_ids[5]
+    labels = torch.tensor([[gt_token_id]], dtype=torch.long)
+
+    logits = torch.full(
+        (1, 1, VOCAB_SIZE), -1e6, dtype=torch.float32, requires_grad=True
+    )
+    logits_ = torch.full((1, 1, VOCAB_SIZE), 0.0, dtype=torch.float32)
+    logits_[:, :, p_token_id] = 1e6
+    logits = logits + logits_
+
+    loss = loss_fn(logits, labels)
+
+    assert loss.grad_fn is not None, "Loss is not differentiable!"
+
+
+@pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 def test_correct_minimum(loss_class, logit_builder):
-    loss_fn = loss_class(TOKENIZER)
+    loss_fn = loss_class(TOKENIZER, reweigh=False)
     ref_tokens = [str(i) for i in range(10)] + ["A"]
     ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
 
@@ -137,6 +161,7 @@ def test_correct_minimum(loss_class, logit_builder):
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
 
+
 @pytest.mark.parametrize(
     "custom_vocab_li",
     [
@@ -149,13 +174,17 @@ def test_correct_minimum(loss_class, logit_builder):
 @pytest.mark.parametrize("loss_class", [NTLoss])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 @pytest.mark.parametrize("squash_factor", [0.5, 1, 2, 20])
-def test_setup_distance_lookup(custom_vocab_li, loss_class, logit_builder, squash_factor):
+def test_setup_distance_lookup(
+    custom_vocab_li, loss_class, logit_builder, squash_factor
+):
     # Make sure mapping of order of NTs in vocab is maintained for dist_matrix
     # Make sure that the distance matrix doesn't make assumptions about order of NTs
-    
+
     if custom_vocab_li is not None:
         nums_in_vocab = custom_vocab_li
-        custom_vocab = dict([(str(n), i) for i, n in enumerate(random.shuffle(list((range(0, 10, 2)))))])
+        custom_vocab = dict(
+            [(str(n), i) for i, n in enumerate(random.shuffle(list((range(0, 10, 2)))))]
+        )
         if "A" not in custom_vocab:
             custom_vocab["A"] = len(custom_vocab)
         tok = Tokenizer(models.WordLevel(vocab=custom_vocab))
@@ -167,7 +196,7 @@ def test_setup_distance_lookup(custom_vocab_li, loss_class, logit_builder, squas
     loss_fn = loss_class(tokenizer, digit_level=False)
 
     num_vals = loss_fn.number_values_dense
-    
+
     assert loss_fn.dist_lookup.shape[0] == loss_fn.dist_lookup.shape[1], (
         "The distance lookup matrix should be square."
     )
@@ -176,7 +205,7 @@ def test_setup_distance_lookup(custom_vocab_li, loss_class, logit_builder, squas
         "in vocab."
     )
 
-    # Check whether value at (i,j) in matrix is the expected value: the absolute 
+    # Check whether value at (i,j) in matrix is the expected value: the absolute
     # difference between num_vals[i] and num_vals[j]
     for i, i_val in enumerate(num_vals):
         for j, j_val in enumerate(num_vals):
@@ -205,6 +234,7 @@ def test_setup_distance_lookup(custom_vocab_li, loss_class, logit_builder, squas
                 f"expected value ({loss_fn.dist_lookup[dist_idx, j]} vs {abs(i_val - j_val)})."
             )
 
+
 @pytest.mark.parametrize("loss_class", [NTLoss])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 @pytest.mark.parametrize("squash_factor", [0.5, 1, 2, 20])
@@ -219,7 +249,7 @@ def test_correct_squashing(loss_class, logit_builder, squash_factor):
 
         return
 
-    loss_fn = loss_class(TOKENIZER, squash_factor=squash_factor)
+    loss_fn = loss_class(TOKENIZER, squash_factor=squash_factor, reweigh=False)
     ref_tokens = [str(i) for i in range(10)] + ["A"]
     ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
 
@@ -287,12 +317,19 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
             match=r"The squash factor can't be equal to or smaller than 1*",
         ):
             loss_fn = loss_class(
-                tokenizer, digit_level=False, squash_factor=squash_factor
+                tokenizer,
+                digit_level=False,
+                squash_factor=squash_factor,
             )
 
         return
 
-    loss_fn = loss_class(tokenizer, digit_level=False, squash_factor=squash_factor)
+    loss_fn = loss_class(
+        tokenizer,
+        digit_level=False,
+        squash_factor=squash_factor,
+        reweigh=False,
+    )
     ref_tokens = [str(i) for i in range(10)] + ["A"]
     ref_ids = [tokenizer.convert_tokens_to_ids(t) for t in ref_tokens]
 
@@ -328,3 +365,50 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
     assert torch.all(losses <= squash_factor), (
         "Loss should be smaller or equal to the squashing factor, if this is set."
     )
+
+
+@pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
+@pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
+def test_logit_scaling(loss_class, logit_builder):
+    loss_fn = loss_class(TOKENIZER, reweigh=True)
+    ref_tokens = [str(i) for i in range(10)] + ["A"]
+    ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
+
+    # Make sure max_dist is set up correctly for regularization
+    assert loss_fn.max_dist > 0, "loss_fn.max_dist is not set up correctly"
+
+    # Guard: make sure all required tokens exist in the vocab
+    assert all(i is not None and i >= 0 for i in ref_ids), "Missing token id"
+
+    losses = torch.zeros(len(ref_ids), len(ref_ids), dtype=torch.float32)
+    for i, (gt_token, gt_token_id) in enumerate(zip(ref_tokens, ref_ids)):
+        labels = torch.tensor([[gt_token_id]], dtype=torch.long)
+        for peak_idx, peak_id in enumerate(ref_ids):
+            logits = logit_builder(ref_ids, peak_id, peak_idx)
+            loss = loss_fn(logits, labels)
+            if loss_class == NTLoss:
+                print(gt_token, TOKENIZER.convert_ids_to_tokens(peak_id), loss)
+            losses[i, peak_idx] = loss.item()
+
+        # Ensure that if GT is number and mass is on text, loss is at least as
+        # high as for worst number prediction: should be the case for weighted NT loss.
+        mins = torch.argsort(losses[i, :], dim=0)
+        expected = torch.Tensor(
+            sorted(range(10), key=lambda j: (abs(j - i), j)) + [10],
+        ).long()
+
+        if i == 10:
+            assert torch.allclose(
+                losses[i, :], torch.zeros_like(losses[i, :]), atol=1e-8
+            ), "Loss should be zero when the ground-truth token is non-numeric."
+        else:
+            assert torch.equal(mins, expected), (
+                "For a digit ground truth, loss must be minimal when the distribution "
+                "peaks over the same digit."
+            )
+            assert torch.all(losses[i, expected[-2]] <= losses[i, -1]), (
+                "For a digit ground truth and mass concentration on text, weighted loss "
+                "should be at least as high as for worst number prediction."
+            )
+
+    assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"

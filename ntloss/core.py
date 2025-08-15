@@ -16,6 +16,7 @@ class AbstractNTLoss(ABC):
         self,
         tokenizer: PreTrainedTokenizer,
         digit_level: bool = True,
+        reweigh: bool = True,
     ):
         """
         NTL constructor.
@@ -24,12 +25,18 @@ class AbstractNTLoss(ABC):
             tokenizer: Standard HF tokenizer
             digit_level: Whether to ensure only digits are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
+            reweigh: Whether to scale the NTL using the logit weight on
+                number tokens. Defaults to True.
 
         """
         super().__init__()
         self.tokenizer = tokenizer
         self.digit_level = digit_level
+        self.reweigh = reweigh
+
         self.setup_number_tokens()
+
+        self.max_dist = torch.tensor(0.0)
 
     def setup_number_tokens(self):
         """Setting up attributes needed by NT loss"""
@@ -62,7 +69,9 @@ class AbstractNTLoss(ABC):
         self.number_values_dense = self.number_values[self.is_number_token]
 
         if self.digit_level:
-            assert len(self.number_values_dense) == 10, f"You requested digit-level but more than 10 number tokens were identified: {self.number_values_dense}"
+            assert len(self.number_values_dense) == 10, (
+                f"You requested digit-level but more than 10 number tokens were identified: {self.number_values_dense}"
+            )
 
     @abstractmethod
     def forward(
@@ -77,6 +86,44 @@ class AbstractNTLoss(ABC):
         """Alias to self.forward"""
         return self.forward(*args, **kwargs)
 
+    def reweigh_fn(
+        self,
+        logits: Tensor,
+        loss: Tensor,
+        valid_positions: Tensor,
+    ) -> Tensor:
+        """
+        Scale the NT loss element-wise using the logit weight on number tokens.
+
+        Args:
+            logits: Tensor of shape BS x T x V
+            loss: 1D Tensor of size BS*NT with the computed NT losses
+            valid_positions: Tensor of shape BS x T indicating for which tokens
+                the NT loss should be computed
+
+        Returns:
+            A 1D Tensor of size BS*NT with the scaled NT losses
+
+        """
+
+        # Take softmax over logits of all tokens in vocab and compute NT logit weight
+        softmax_probs_all = F.softmax(logits, dim=-1)
+        nt_logit_weight = torch.sum(
+            softmax_probs_all[:, :, self.is_number_token], dim=-1
+        )[valid_positions]
+
+        # Apply weights for NTL element-wise
+        loss *= nt_logit_weight
+
+        # Apply regularization
+        loss += (
+            1.01
+            * self.max_dist.to(dtype=loss.dtype, device=loss.device)
+            * (1 - nt_logit_weight)
+        )
+
+        return loss
+
 
 class NTLossDotProduct(AbstractNTLoss):
     """Class for NT losses that produce a token-wise numerical output"""
@@ -85,6 +132,7 @@ class NTLossDotProduct(AbstractNTLoss):
         self,
         tokenizer: PreTrainedTokenizer,
         digit_level: bool = True,
+        reweigh: bool = True,
         loss_function: Callable = F.mse_loss,
     ):
         """
@@ -94,6 +142,8 @@ class NTLossDotProduct(AbstractNTLoss):
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
             digit_level: Whether to ensure only digit tokens are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
+            reweigh: Whether to scale the NTL using the logit weight on
+                number tokens. Defaults to True.
             loss_function: Function to apply on the delta between the ground truth number
                 and the obtained dot product (nt-probs * token-values).
 
@@ -101,8 +151,28 @@ class NTLossDotProduct(AbstractNTLoss):
         super().__init__(
             tokenizer=tokenizer,
             digit_level=digit_level,
+            reweigh=reweigh,
         )
         self.loss_function = loss_function
+
+        self.setup_max_dist()
+
+    def setup_max_dist(self):
+        """
+        Set up the maximum distance between the number tokens based on the selected loss function.
+        """
+
+        # Extract the number token values and get the minimum and maximum
+        vals = self.number_values_dense.unsqueeze(0)
+        max_val = vals.max()
+        min_val = vals.min()
+
+        # Compute the largest value the loss function used in NT loss computation can get
+        # Make sure to account for possibility of assymetrical loss function
+        self.max_dist = torch.maximum(
+            torch.abs(self.loss_function(min_val, max_val)),
+            torch.abs(self.loss_function(max_val, min_val)),
+        )
 
     def forward(
         self,
@@ -170,6 +240,12 @@ class NTLossDotProduct(AbstractNTLoss):
         # Apply specified loss function to y and yhat
         loss = self.loss_function(yhat, y[valid_positions], reduction="none")
 
+        # If reweigh: compute weights for NTL based on logits
+        if self.reweigh:
+            loss = self.reweigh_fn(
+                logits=logits, loss=loss, valid_positions=valid_positions
+            )
+
         if reduction == "mean":
             # Mean pooling (weighted by loss mask)
             loss = torch.dot(
@@ -200,6 +276,7 @@ class NTLoss(AbstractNTLoss):
         self,
         tokenizer: PreTrainedTokenizer,
         digit_level: bool = True,
+        reweigh: bool = True,
         squash_factor: Optional[float] = None,
     ):
         """
@@ -209,9 +286,15 @@ class NTLoss(AbstractNTLoss):
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
             digit_level: Whether to ensure only digit tokens are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
-            squash: The optional squashing factor for the NTL.
+            reweigh: Whether to scale the NTL using the logit weight on
+                number tokens. Defaults to True.
+            squash_factor: The optional squashing factor for the NTL.
         """
-        super().__init__(tokenizer=tokenizer, digit_level=digit_level)
+        super().__init__(
+            tokenizer=tokenizer,
+            digit_level=digit_level,
+            reweigh=reweigh,
+        )
 
         self.squash_factor = squash_factor
         self.setup_distance_lookup(squash_factor)
@@ -236,7 +319,7 @@ class NTLoss(AbstractNTLoss):
         # Create mapping from number token ids to their index in order of appearance in vocab:
         # e.g. token "3" -> id 519 -> dist_idx 1, then abs dist to 3 for other NT values will be found in row/column 1
         vocab_to_dist_idx = torch.full((len(self.tokenizer),), -1, dtype=torch.long)
-        # Use arange to ensure order of appearance 
+        # Use arange to ensure order of appearance
         vocab_to_dist_idx[num_ids] = torch.arange(num_ids.size(0), dtype=torch.long)
 
         # Build NxN abs-diff matrix
@@ -268,6 +351,7 @@ class NTLoss(AbstractNTLoss):
 
         self.vocab_to_dist_idx = vocab_to_dist_idx
         self.dist_lookup = lookup
+        self.max_dist = lookup.max()
 
         logger.info(f"Done setting up the distance lookup table{additional_log_info}")
 
@@ -339,6 +423,12 @@ class NTLoss(AbstractNTLoss):
 
         # loss is the absolute difference weighted by the softmax probs
         loss = (abs_diff * softmax_probs[valid_positions]).sum(dim=-1)
+
+        # If reweigh: compute weights for NTL based on logits
+        if self.reweigh:
+            loss = self.reweigh_fn(
+                logits=logits, loss=loss, valid_positions=valid_positions
+            )
 
         if reduction == "mean":
             # Mean pooling (weighted by loss mask)
