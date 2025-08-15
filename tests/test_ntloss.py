@@ -99,9 +99,33 @@ def test_ntloss_variants(loss_class, logits_dicts, label_tokens):
 
 
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
+@pytest.mark.parametrize("reweigh", [True, False])
+def test_differentiability(loss_class, reweigh):
+    loss_fn = loss_class(TOKENIZER, reweigh=reweigh)
+
+    ref_tokens = [str(i) for i in range(10)] + ["A"]
+    ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
+
+    gt_token_id = ref_ids[1]
+    p_token_id = ref_ids[5]
+    labels = torch.tensor([[gt_token_id]], dtype=torch.long)
+
+    logits = torch.full(
+        (1, 1, VOCAB_SIZE), -1e6, dtype=torch.float32, requires_grad=True
+    )
+    logits_ = torch.full((1, 1, VOCAB_SIZE), 0.0, dtype=torch.float32)
+    logits_[:, :, p_token_id] = 1e6
+    logits = logits + logits_
+
+    loss = loss_fn(logits, labels)
+
+    assert loss.grad_fn is not None, "Loss is not differentiable!"
+
+
+@pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 def test_correct_minimum(loss_class, logit_builder):
-    loss_fn = loss_class(TOKENIZER)
+    loss_fn = loss_class(TOKENIZER, reweigh=False)
     ref_tokens = [str(i) for i in range(10)] + ["A"]
     ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
 
@@ -225,7 +249,7 @@ def test_correct_squashing(loss_class, logit_builder, squash_factor):
 
         return
 
-    loss_fn = loss_class(TOKENIZER, squash_factor=squash_factor)
+    loss_fn = loss_class(TOKENIZER, squash_factor=squash_factor, reweigh=False)
     ref_tokens = [str(i) for i in range(10)] + ["A"]
     ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
 
@@ -304,6 +328,7 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
         tokenizer,
         digit_level=False,
         squash_factor=squash_factor,
+        reweigh=False,
     )
     ref_tokens = [str(i) for i in range(10)] + ["A"]
     ref_ids = [tokenizer.convert_tokens_to_ids(t) for t in ref_tokens]
@@ -345,7 +370,7 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 def test_logit_scaling(loss_class, logit_builder):
-    loss_fn = loss_class(TOKENIZER, weight_using_logits=True)
+    loss_fn = loss_class(TOKENIZER, reweigh=True)
     ref_tokens = [str(i) for i in range(10)] + ["A"]
     ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
 
