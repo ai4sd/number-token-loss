@@ -16,7 +16,7 @@ class AbstractNTLoss(ABC):
         self,
         tokenizer: PreTrainedTokenizer,
         digit_level: bool = True,
-        weight_using_logits: bool = False,
+        reweigh: bool = True,
     ):
         """
         NTL constructor.
@@ -25,14 +25,14 @@ class AbstractNTLoss(ABC):
             tokenizer: Standard HF tokenizer
             digit_level: Whether to ensure only digits are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
-            weight_using_logits: Whether to scale the NTL using the logit weight on
-                number tokens. Defaults to False.
+            reweigh: Whether to scale the NTL using the logit weight on
+                number tokens. Defaults to True.
 
         """
         super().__init__()
         self.tokenizer = tokenizer
         self.digit_level = digit_level
-        self.weight_using_logits = weight_using_logits
+        self.reweigh = reweigh
 
         self.setup_number_tokens()
 
@@ -86,7 +86,7 @@ class AbstractNTLoss(ABC):
         """Alias to self.forward"""
         return self.forward(*args, **kwargs)
 
-    def apply_weight_nt_logits(
+    def reweigh_fn(
         self,
         logits: Tensor,
         loss: Tensor,
@@ -108,18 +108,18 @@ class AbstractNTLoss(ABC):
 
         # Take softmax over logits of all tokens in vocab and compute NT logit weight
         softmax_probs_all = F.softmax(logits, dim=-1)
-        self.nt_logit_weight = torch.sum(
+        nt_logit_weight = torch.sum(
             softmax_probs_all[:, :, self.is_number_token], dim=-1
         )[valid_positions]
 
         # Apply weights for NTL element-wise
-        loss *= self.nt_logit_weight
+        loss *= nt_logit_weight
 
         # Apply regularization
         loss += (
             1.01
             * self.max_dist.to(dtype=loss.dtype, device=loss.device)
-            * (1 - self.nt_logit_weight)
+            * (1 - nt_logit_weight)
         )
 
         return loss
@@ -132,7 +132,7 @@ class NTLossDotProduct(AbstractNTLoss):
         self,
         tokenizer: PreTrainedTokenizer,
         digit_level: bool = True,
-        weight_using_logits: bool = False,
+        reweigh: bool = True,
         loss_function: Callable = F.mse_loss,
     ):
         """
@@ -142,8 +142,8 @@ class NTLossDotProduct(AbstractNTLoss):
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
             digit_level: Whether to ensure only digit tokens are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
-            weight_using_logits: Whether to scale the NTL using the logit weight on
-                number tokens. Defaults to False.
+            reweigh: Whether to scale the NTL using the logit weight on
+                number tokens. Defaults to True.
             loss_function: Function to apply on the delta between the ground truth number
                 and the obtained dot product (nt-probs * token-values).
 
@@ -151,7 +151,7 @@ class NTLossDotProduct(AbstractNTLoss):
         super().__init__(
             tokenizer=tokenizer,
             digit_level=digit_level,
-            weight_using_logits=weight_using_logits,
+            reweigh=reweigh,
         )
         self.loss_function = loss_function
 
@@ -240,9 +240,9 @@ class NTLossDotProduct(AbstractNTLoss):
         # Apply specified loss function to y and yhat
         loss = self.loss_function(yhat, y[valid_positions], reduction="none")
 
-        # If weight_using_logits: compute weights for NTL based on logits
-        if self.weight_using_logits:
-            loss = self.apply_weight_nt_logits(
+        # If reweigh: compute weights for NTL based on logits
+        if self.reweigh:
+            loss = self.reweigh_fn(
                 logits=logits, loss=loss, valid_positions=valid_positions
             )
 
@@ -276,7 +276,7 @@ class NTLoss(AbstractNTLoss):
         self,
         tokenizer: PreTrainedTokenizer,
         digit_level: bool = True,
-        weight_using_logits: bool = False,
+        reweigh: bool = True,
         squash_factor: Optional[float] = None,
     ):
         """
@@ -286,14 +286,14 @@ class NTLoss(AbstractNTLoss):
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
             digit_level: Whether to ensure only digit tokens are considered number tokens,
                 stabalizing training with NTL. Defaults to True.
-            weight_using_logits: Whether to scale the NTL using the logit weight on
-                number tokens. Defaults to False.
+            reweigh: Whether to scale the NTL using the logit weight on
+                number tokens. Defaults to True.
             squash_factor: The optional squashing factor for the NTL.
         """
         super().__init__(
             tokenizer=tokenizer,
             digit_level=digit_level,
-            weight_using_logits=weight_using_logits,
+            reweigh=reweigh,
         )
 
         self.squash_factor = squash_factor
@@ -424,9 +424,9 @@ class NTLoss(AbstractNTLoss):
         # loss is the absolute difference weighted by the softmax probs
         loss = (abs_diff * softmax_probs[valid_positions]).sum(dim=-1)
 
-        # If weight_using_logits: compute weights for NTL based on logits
-        if self.weight_using_logits:
-            loss = self.apply_weight_nt_logits(
+        # If reweigh: compute weights for NTL based on logits
+        if self.reweigh:
+            loss = self.reweigh_fn(
                 logits=logits, loss=loss, valid_positions=valid_positions
             )
 
