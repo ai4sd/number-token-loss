@@ -23,11 +23,11 @@
 ## 📖 Overview
 This repo maintains the code for the `ntloss` [PyPI package](https://pypi.org/project/ntloss/)
 
-- 📄 **Paper source code**: [Regress, Don't Guess – ICML 2025](https://ibm.biz/ntl-code)
+- 🧑🏽‍💻 **Paper source code**: [Regress, Don't Guess – ICML 2025](https://ibm.biz/ntl-code)
 - 📄 **Paper**: [Regress, Don't Guess – A Regression-like Loss on Number Tokens for Language Models](https://ibm.biz/ntl-paper)
 - 🌐 **Project Page**: [Landing Page](https://ibm.biz/ntl-main)
 - 🎮 **Demo**: [HuggingFace Spaces Demo (Streamlit)](https://ibm.biz/ntl-demo)
-- 🎮 **Docs**: [Documentation for the PyPI package](https://ibm.biz/ntl-docs)
+- 📖 **Docs**: [Documentation for the PyPI package](https://ibm.biz/ntl-docs)
 
 
 ## 🏃‍♂️ Quick Start
