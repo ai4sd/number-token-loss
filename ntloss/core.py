@@ -57,12 +57,13 @@ class AbstractNTLoss(ABC):
         for token, id in vocab.items():
             if is_number(token, finite=True):
                 if self.digit_level:
+                    stripped_token = token.strip()
                     # NOTE: This check ensures number token value only occurs for digits, not for multi-digit numbers (123)
                     # This stabilizes training with NTL. Can be altered though, see paper experiments.
                     if (
-                        token.strip().isascii()  # Exclude tokens that are numbers in other languages like ႘
+                        stripped_token.isascii()  # Exclude tokens that are numbers in other languages like ႘
                         and -1 <= float(token) <= 9
-                        and len(token.lstrip(" ")) == 1
+                        and len(stripped_token) == 1
                     ):
                         self.number_values[id] = float(token)
                 else:
