@@ -188,6 +188,7 @@ class NTLossDotProduct(AbstractNTLoss):
         labels: Tensor,
         loss_mask: Optional[Tensor] = None,
         reduction: str = "mean",
+        ignore_index: int = -100,
     ) -> Tensor:
         """
         Computes the NTL based on the dot product between token values and their probs.
@@ -198,6 +199,7 @@ class NTLossDotProduct(AbstractNTLoss):
             loss_mask: 2D Optional tensor of BS x T.
             reduction: Optional string specifying the reduction to apply to the
                 output. Defaults to "mean", options are "mean", "sum", "none".
+            ignore_index: The token ID to ignore in the labels. Defaults to -100.
 
         Returns:
             Loss tensor
@@ -209,7 +211,7 @@ class NTLossDotProduct(AbstractNTLoss):
         if labels.numel() == 0:
             raise ValueError("Labels passed to the NTLossDotProduct are empty!")
 
-        labels = labels.masked_fill(labels == -100, 0)
+        labels = labels.masked_fill(labels == ignore_index, 0)
 
         # Create a mask to filter out non-digit tokens
         y = self.number_values[labels]
@@ -384,6 +386,7 @@ class NTLoss(AbstractNTLoss):
             loss_mask: Optional 2D tensor of BS x T.
             reduction: Optional string specifying the reduction to apply to the
                 output. Defaults to "mean", options are "mean", "sum", "none".
+            ignore_index: The token ID to ignore in the labels. Defaults to -100.
 
         Returns:
             Loss tensor
