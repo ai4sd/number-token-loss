@@ -22,11 +22,14 @@ class AbstractNTLoss(ABC):
         NTL constructor.
 
         Args:
-            tokenizer: Standard HF tokenizer
+            tokenizer: Standard HF tokenizer.
             digit_level: Whether to ensure only digits are considered number tokens,
-                stabalizing training with NTL. Defaults to True.
+                stabalizing training with NTL. Defaults to True. Used for most
+                experiments in the ICML paper.
             reweigh: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to True.
+                NOTE: The ICML paper does *not* use this option which can lead to
+                incorrect loss if most mass is placed outside of the number tokens.
 
         """
         super().__init__()
@@ -94,16 +97,18 @@ class AbstractNTLoss(ABC):
     ) -> Tensor:
         """
         Scale the NT loss element-wise using the logit weight on number tokens.
+        NOTE: This reweighing ensures that if ground truth is a number token 
+            but most probability mass is on text tokens, the loss will be *higher* 
+            than the worst possible number token. This is an edge case in practice.
 
         Args:
-            logits: Tensor of shape BS x T x V
-            loss: 1D Tensor of size BS*NT with the computed NT losses
-            valid_positions: Tensor of shape BS x T indicating for which tokens
-                the NT loss should be computed
+            logits: 3D Tensor of shape BS x T x V.
+            loss: 2D Tensor of size BS x NT with the computed NTL for all numbers.
+            valid_positions: 2D Tensor of shape BS x T indicating for which tokens
+                the NT loss should be computed.
 
         Returns:
-            A 1D Tensor of size BS*NT with the scaled NT losses
-
+            A 2D Tensor of size BS x NT with the scaled NT losses.
         """
 
         # Take softmax over logits of all tokens in vocab and compute NT logit weight
@@ -126,7 +131,7 @@ class AbstractNTLoss(ABC):
 
 
 class NTLossDotProduct(AbstractNTLoss):
-    """Class for NT losses that produce a token-wise numerical output"""
+    """Class for NT losses that produce a token-wise numerical output."""
 
     def __init__(
         self,
@@ -136,17 +141,20 @@ class NTLossDotProduct(AbstractNTLoss):
         loss_function: Callable = F.mse_loss,
     ):
         """
-        NTL constructor.
+        Referred to as NTL-L_p in the paper.
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
-            digit_level: Whether to ensure only digit tokens are considered number tokens,
-                stabalizing training with NTL. Defaults to True.
+            digit_level: Whether to ensure only digits are considered number tokens,
+                stabalizing training with NTL. Defaults to True. Used for most
+                experiments in the ICML paper.
             reweigh: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to True.
+                NOTE: The ICML paper does *not* use this option which can lead to
+                incorrect loss if most mass is placed outside of the number tokens.
             loss_function: Function to apply on the delta between the ground truth number
-                and the obtained dot product (nt-probs * token-values).
-
+                and the obtained dot product (nt-probs * token-values). Defaults to
+                MSE, but MAE, Huber etc are also compatible.
         """
         super().__init__(
             tokenizer=tokenizer,
@@ -185,9 +193,9 @@ class NTLossDotProduct(AbstractNTLoss):
         Computes the NTL based on the dot product between token values and their probs.
 
         Args:
-            logits: Tensor of shape BS x T x V
-            labels: Tensor of shape BS x T
-            loss_mask: Optional tensor of BS x T
+            logits: 3D Tensor of shape BS x T x V.
+            labels: 2D Tensor of shape BS x T.
+            loss_mask: 2D Optional tensor of BS x T.
             reduction: Optional string specifying the reduction to apply to the
                 output. Defaults to "mean", options are "mean", "sum", "none".
 
@@ -270,7 +278,7 @@ class NTLossDotProduct(AbstractNTLoss):
 
 
 class NTLoss(AbstractNTLoss):
-    """Class for Wasserstein-based NTLoss. This is the default as per our paper."""
+    """Class for Wasserstein-based NTLoss. This is the default in the ICML paper."""
 
     def __init__(
         self,
@@ -280,15 +288,23 @@ class NTLoss(AbstractNTLoss):
         squash_factor: Optional[float] = None,
     ):
         """
-        NTL constructor.
+        NTL constructor for the Wasserstein-based NTLoss.
 
         Args:
-            tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
-            digit_level: Whether to ensure only digit tokens are considered number tokens,
-                stabalizing training with NTL. Defaults to True.
+            tokenizer: Any HuggingFace tokenizer.
+            digit_level: Whether to ensure only digits are considered number tokens,
+                stabalizing training with NTL. Defaults to True. Used for most
+                experiments in the ICML paper.
             reweigh: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to True.
-            squash_factor: The optional squashing factor for the NTL.
+                NOTE: The ICML paper does *not* use this option which can lead to
+                incorrect loss if most mass is placed outside of the number tokens.
+            squash_factor: The optional squashing factor for the NTL. If provided,
+                this number denotes the factor by which predicting the largest number
+                token is worse than predicting the closest incorrect number token.
+                E.g., with digit-level tokenization this factor is 9. Setting this
+                to 1 will recover cross entropy. This argument is intended to handle
+                irregular vocabs with large numerical token values.
         """
         super().__init__(
             tokenizer=tokenizer,
@@ -302,7 +318,7 @@ class NTLoss(AbstractNTLoss):
     def setup_distance_lookup(
         self,
         squash_factor: Optional[float] = None,
-    ):
+    ) -> None:
         """
         Set up a lookup table for the distances between the number tokens.
         Use squash_factor to control by what factor the farthest number token is worse than the closest, incorrect number token.
@@ -311,7 +327,6 @@ class NTLoss(AbstractNTLoss):
 
         Args:
             squash_factor: The optional squashing factor used.
-
         """
 
         # Get token ids for number tokens
@@ -344,16 +359,13 @@ class NTLoss(AbstractNTLoss):
             lookup = 1 + (diff - global_min_nz) * scale
             lookup[diff == 0] = 0.0
 
-            additional_log_info = f", used a squashing factor of {squash_factor}."
         else:
             lookup = diff
-            additional_log_info = ""
 
         self.vocab_to_dist_idx = vocab_to_dist_idx
         self.dist_lookup = lookup
         self.max_dist = lookup.max()
 
-        logger.info(f"Done setting up the distance lookup table{additional_log_info}")
 
     def forward(
         self,
@@ -367,9 +379,9 @@ class NTLoss(AbstractNTLoss):
         Computes the NTL.
 
         Args:
-            logits: Tensor of shape BS x T x V
-            labels: Tensor of shape BS x T
-            loss_mask: Optional tensor of BS x T
+            logits: 3D Tensor of shape BS x T x V.
+            labels: 2D Tensor of shape BS x T.
+            loss_mask: Optional 2D tensor of BS x T.
             reduction: Optional string specifying the reduction to apply to the
                 output. Defaults to "mean", options are "mean", "sum", "none".
 

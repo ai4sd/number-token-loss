@@ -9,6 +9,7 @@ from torch import Tensor
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from ntloss import NTLoss, NTLossDotProduct
+from ntloss.utils import is_number
 
 TOKENIZER = AutoTokenizer.from_pretrained("t5-small")
 VOCAB_SIZE = TOKENIZER.vocab_size
@@ -228,7 +229,6 @@ def test_setup_distance_lookup(
 
         for j, j_val in enumerate(num_vals):
             i_val = float(ref_tokens[i])
-            print(i_val, j_val, loss_fn.dist_lookup[dist_idx, j])
             assert loss_fn.dist_lookup[dist_idx, j] == abs(i_val - j_val), (
                 f"Value in cell {dist_idx}, {j} of the distance lookup matrix is not the "
                 f"expected value ({loss_fn.dist_lookup[dist_idx, j]} vs {abs(i_val - j_val)})."
@@ -277,8 +277,6 @@ def test_correct_squashing(loss_class, logit_builder, squash_factor):
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx)
             loss = loss_fn(logits, labels)
-            if loss_class == NTLoss:
-                print(gt_token, TOKENIZER.convert_ids_to_tokens(peak_id), loss)
             losses[i, peak_idx] = loss.item()
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
@@ -299,7 +297,7 @@ def test_correct_squashing(loss_class, logit_builder, squash_factor):
 )
 @pytest.mark.parametrize("loss_class", [NTLoss])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
-@pytest.mark.parametrize("squash_factor", [0.5, 1, 2, 20])
+@pytest.mark.parametrize("squash_factor", [None, 0.5, 1, 2, 20])
 def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_factor):
     if custom_vocab is not None:
         if "A" not in custom_vocab:
@@ -311,7 +309,7 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
     vocab_size = tokenizer.vocab_size
 
     # Make sure wrong uses of the squashing factor are caught
-    if squash_factor <= 1:
+    if squash_factor is not None and squash_factor <= 1:
         with pytest.raises(
             AssertionError,
             match=r"The squash factor can't be equal to or smaller than 1*",
@@ -345,11 +343,18 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
     max_lookup = loss_fn.dist_lookup.max()
 
     computed = torch.div(max_lookup, min_lookup_nz)
-    expected = torch.tensor([squash_factor], dtype=loss_fn.dist_lookup.dtype)
-    assert torch.allclose(computed, expected, atol=1e-8), (
-        "Distance to farthest number token should be the defined squashing factor larger ",
-        f"than the distance to the closest number token ({computed} instead of {expected}).",
-    )
+
+    if custom_vocab is not None:
+        max_nt = max([float(t) for t in custom_vocab.keys() if is_number(t)])
+        min_nt = min(
+            [float(t) for t in custom_vocab.keys() if is_number(t) and float(t) > 0]
+        )
+        factor = squash_factor or max_nt / min_nt
+        expected = torch.tensor([factor], dtype=loss_fn.dist_lookup.dtype)
+        assert torch.allclose(computed, expected, atol=1e-8), (
+            "Distance to farthest number token should be the defined squashing factor larger ",
+            f"than the distance to the closest number token ({computed} instead of {expected}).",
+        )
 
     # Also make sure that the number token loss is thus always smaller or equal to the squashing factor
     losses = torch.zeros(len(ref_ids), len(ref_ids), dtype=torch.float32)
@@ -361,11 +366,10 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
             losses[i, peak_idx] = loss.item()
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
-
-    assert torch.all(losses <= squash_factor), (
-        "Loss should be smaller or equal to the squashing factor, if this is set."
-    )
-
+    if squash_factor is not None:
+        assert torch.all(losses <= squash_factor), (
+            "Loss should be smaller or equal to the squashing factor, if this is set."
+        )
 
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
@@ -386,8 +390,6 @@ def test_logit_scaling(loss_class, logit_builder):
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx)
             loss = loss_fn(logits, labels)
-            if loss_class == NTLoss:
-                print(gt_token, TOKENIZER.convert_ids_to_tokens(peak_id), loss)
             losses[i, peak_idx] = loss.item()
 
         # Ensure that if GT is number and mass is on text, loss is at least as
@@ -412,3 +414,4 @@ def test_logit_scaling(loss_class, logit_builder):
             )
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
+
