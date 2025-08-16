@@ -226,9 +226,8 @@ class NTLossDotProduct(AbstractNTLoss):
         )
 
         # If no digit tokens in batch, or total of the relevant loss_mask is zero, no need for upcoming calculations
-        if (torch.count_nonzero(valid_positions) == 0) or (
-            torch.count_nonzero(label_mask) == 0
-        ):
+        if not valid_positions.any() or not label_mask.any():
+            
             if (reduction == "mean") | (reduction == "sum"):
                 loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
@@ -415,9 +414,8 @@ class NTLoss(AbstractNTLoss):
         )
 
         # If no digit tokens in batch, or total of the relevant loss_mask is zero, no need for upcoming calculations
-        if (torch.count_nonzero(valid_positions) == 0) or (
-            torch.count_nonzero(label_mask) == 0
-        ):
+        if not valid_positions.any() or not label_mask.any():
+
             if (reduction == "mean") | (reduction == "sum"):
                 loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
