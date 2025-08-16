@@ -24,7 +24,7 @@ class AbstractNTLoss(ABC):
         Args:
             tokenizer: Standard HF tokenizer.
             digit_level: Whether to ensure only digits are considered number tokens,
-                stabalizing training with NTL. Defaults to True. Used for most
+                stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
             reweigh: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to True.
@@ -146,7 +146,7 @@ class NTLossDotProduct(AbstractNTLoss):
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
             digit_level: Whether to ensure only digits are considered number tokens,
-                stabalizing training with NTL. Defaults to True. Used for most
+                stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
             reweigh: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to True.
@@ -176,7 +176,7 @@ class NTLossDotProduct(AbstractNTLoss):
         min_val = vals.min()
 
         # Compute the largest value the loss function used in NT loss computation can get
-        # Make sure to account for possibility of assymetrical loss function
+        # Make sure to account for possibility of asymmetrical loss function
         self.max_dist = torch.maximum(
             torch.abs(self.loss_function(min_val, max_val)),
             torch.abs(self.loss_function(max_val, min_val)),
@@ -293,7 +293,7 @@ class NTLoss(AbstractNTLoss):
         Args:
             tokenizer: Any HuggingFace tokenizer.
             digit_level: Whether to ensure only digits are considered number tokens,
-                stabalizing training with NTL. Defaults to True. Used for most
+                stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
             reweigh: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to True.
