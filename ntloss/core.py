@@ -24,7 +24,7 @@ class AbstractNTLoss(ABC):
         Args:
             tokenizer: Standard HF tokenizer.
             digit_level: Whether to ensure only digits are considered number tokens,
-                stabalizing training with NTL. Defaults to True. Used for most
+                stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
             reweigh: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to True.
@@ -57,12 +57,13 @@ class AbstractNTLoss(ABC):
         for token, id in vocab.items():
             if is_number(token, finite=True):
                 if self.digit_level:
+                    stripped_token = token.strip()
                     # NOTE: This check ensures number token value only occurs for digits, not for multi-digit numbers (123)
                     # This stabilizes training with NTL. Can be altered though, see paper experiments.
                     if (
-                        token.strip().isascii()  # Exclude tokens that are numbers in other languages like ႘
+                        stripped_token.isascii()  # Exclude tokens that are numbers in other languages like ႘
                         and -1 <= float(token) <= 9
-                        and len(token.lstrip(" ")) == 1
+                        and len(stripped_token) == 1
                     ):
                         self.number_values[id] = float(token)
                 else:
@@ -146,7 +147,7 @@ class NTLossDotProduct(AbstractNTLoss):
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
             digit_level: Whether to ensure only digits are considered number tokens,
-                stabalizing training with NTL. Defaults to True. Used for most
+                stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
             reweigh: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to True.
@@ -176,7 +177,7 @@ class NTLossDotProduct(AbstractNTLoss):
         min_val = vals.min()
 
         # Compute the largest value the loss function used in NT loss computation can get
-        # Make sure to account for possibility of assymetrical loss function
+        # Make sure to account for possibility of asymmetrical loss function
         self.max_dist = torch.maximum(
             torch.abs(self.loss_function(min_val, max_val)),
             torch.abs(self.loss_function(max_val, min_val)),
@@ -188,6 +189,7 @@ class NTLossDotProduct(AbstractNTLoss):
         labels: Tensor,
         loss_mask: Optional[Tensor] = None,
         reduction: str = "mean",
+        ignore_index: int = -100,
     ) -> Tensor:
         """
         Computes the NTL based on the dot product between token values and their probs.
@@ -198,6 +200,7 @@ class NTLossDotProduct(AbstractNTLoss):
             loss_mask: 2D Optional tensor of BS x T.
             reduction: Optional string specifying the reduction to apply to the
                 output. Defaults to "mean", options are "mean", "sum", "none".
+            ignore_index: The token ID to ignore in the labels. Defaults to -100.
 
         Returns:
             Loss tensor
@@ -209,7 +212,7 @@ class NTLossDotProduct(AbstractNTLoss):
         if labels.numel() == 0:
             raise ValueError("Labels passed to the NTLossDotProduct are empty!")
 
-        labels = labels.masked_fill(labels == -100, 0)
+        labels = labels.masked_fill(labels == ignore_index, 0)
 
         # Create a mask to filter out non-digit tokens
         y = self.number_values[labels]
@@ -223,9 +226,8 @@ class NTLossDotProduct(AbstractNTLoss):
         )
 
         # If no digit tokens in batch, or total of the relevant loss_mask is zero, no need for upcoming calculations
-        if (torch.count_nonzero(valid_positions) == 0) or (
-            torch.count_nonzero(label_mask) == 0
-        ):
+        if not valid_positions.any() or not label_mask.any():
+            
             if (reduction == "mean") | (reduction == "sum"):
                 loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
@@ -293,7 +295,7 @@ class NTLoss(AbstractNTLoss):
         Args:
             tokenizer: Any HuggingFace tokenizer.
             digit_level: Whether to ensure only digits are considered number tokens,
-                stabalizing training with NTL. Defaults to True. Used for most
+                stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
             reweigh: Whether to scale the NTL using the logit weight on
                 number tokens. Defaults to True.
@@ -384,6 +386,7 @@ class NTLoss(AbstractNTLoss):
             loss_mask: Optional 2D tensor of BS x T.
             reduction: Optional string specifying the reduction to apply to the
                 output. Defaults to "mean", options are "mean", "sum", "none".
+            ignore_index: The token ID to ignore in the labels. Defaults to -100.
 
         Returns:
             Loss tensor
@@ -411,9 +414,8 @@ class NTLoss(AbstractNTLoss):
         )
 
         # If no digit tokens in batch, or total of the relevant loss_mask is zero, no need for upcoming calculations
-        if (torch.count_nonzero(valid_positions) == 0) or (
-            torch.count_nonzero(label_mask) == 0
-        ):
+        if not valid_positions.any() or not label_mask.any():
+
             if (reduction == "mean") | (reduction == "sum"):
                 loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
