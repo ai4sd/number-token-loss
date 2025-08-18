@@ -4,12 +4,11 @@ import random
 import numpy as np
 import pytest
 import torch
+from ntloss import NTLoss, NTLossDotProduct
+from ntloss.utils import is_number
 from tokenizers import Tokenizer, models
 from torch import Tensor
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
-
-from ntloss import NTLoss, NTLossDotProduct
-from ntloss.utils import is_number
 
 TOKENIZER = AutoTokenizer.from_pretrained("t5-small")
 VOCAB_SIZE = TOKENIZER.vocab_size
@@ -39,7 +38,7 @@ def gaussian_logits(ids, peak_id, peak_value, vocab_size=VOCAB_SIZE, sigma=1e-1)
     """
     Smooth bell curve over the reference tokens.
     """
-    logits = torch.full((1, 1, vocab_size), -1e-3, dtype=torch.float32)
+    logits = torch.full((1, 1, vocab_size), -1e6, dtype=torch.float32)
     # Assumes that ids are ordered by their numerical value
     for idx, tok_id in enumerate(ids):
         logits[0, 0, tok_id] = -1 * np.abs((idx - peak_value) ** 2 / (2 * sigma**2))
@@ -70,7 +69,11 @@ def gaussian_logits(ids, peak_id, peak_value, vocab_size=VOCAB_SIZE, sigma=1e-1)
         ),
     ],
 )
-def test_ntloss_variants(loss_class, logits_dicts, label_tokens):
+@pytest.mark.parametrize("reduction", ["mean", "sum", "none"])
+@pytest.mark.parametrize("loss_weight", [1, 0, 0.5, None])
+def test_ntloss_variants(
+    loss_class, logits_dicts, label_tokens, reduction, loss_weight
+):
     # convert token strings to IDs
     token_logit_value_dicts = {
         # map token strings to token IDs upfront
@@ -89,14 +92,25 @@ def test_ntloss_variants(loss_class, logits_dicts, label_tokens):
     label_ids = [TOKENIZER.convert_tokens_to_ids(tok) for tok in label_tokens]
     labels = torch.tensor([label_ids], dtype=torch.long)
 
+    # set up loss weights
+    if loss_weight is None:
+        loss_weights = None
+    else:
+        loss_weights = torch.ones_like(labels) * loss_weight
+
     # instantiate and run
     loss_fn = loss_class(tokenizer=TOKENIZER)
-    loss = loss_fn(logits, labels)
+    loss = loss_fn(logits, labels, reduction=reduction, loss_weights=loss_weights)
 
-    # assertions
-    assert isinstance(loss, Tensor), "Loss should be a Python float"
-    assert isinstance(loss.item(), float), "Loss should be a Python float"
-    assert not math.isnan(loss), "Loss must not be NaN"
+    assert torch.is_floating_point(loss), "Loss should be a floating tensor"
+    if reduction != "none":
+        assert isinstance(loss.item(), float), "Loss should be a Python float"
+        assert not math.isnan(loss), "Loss must not be NaN"
+        assert loss.item() > 0 or loss_weights.sum() == 0, "Loss must be positive"
+    else:
+        assert isinstance(loss.sum().item(), float), "Loss should be a Python float"
+        assert not math.isnan(loss.sum()), "Loss must not be NaN"
+        assert loss.sum().item() > 0 or loss_weights.sum() == 0, "Loss must be positive"
 
 
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
@@ -126,7 +140,7 @@ def test_differentiability(loss_class, reweigh):
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 def test_correct_minimum(loss_class, logit_builder):
-    loss_fn = loss_class(TOKENIZER, reweigh=False)
+    loss_fn = loss_class(TOKENIZER, reweigh=True)
     ref_tokens = [str(i) for i in range(10)] + ["A"]
     ref_ids = [TOKENIZER.convert_tokens_to_ids(t) for t in ref_tokens]
 
@@ -141,6 +155,11 @@ def test_correct_minimum(loss_class, logit_builder):
             loss = loss_fn(logits, labels)
 
             losses[i, peak_idx] = loss.item()
+
+            if isinstance(loss_fn, NTLossDotProduct):
+                yhat, nt_mass = loss_fn.predict_numbers(logits)
+                assert 0 <= nt_mass <= 1
+                assert 0 <= yhat <= 9
 
         # TODO: Ensure that if GT is number and mass is on text, loss is at least as
         # high as for worst number prediction. This is not there yet and the reason
@@ -371,6 +390,7 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
             "Loss should be smaller or equal to the squashing factor, if this is set."
         )
 
+
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
 @pytest.mark.parametrize("logit_builder", [dirac_logits, gaussian_logits])
 def test_logit_scaling(loss_class, logit_builder):
@@ -414,4 +434,3 @@ def test_logit_scaling(loss_class, logit_builder):
             )
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
-
