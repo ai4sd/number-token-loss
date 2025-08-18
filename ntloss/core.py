@@ -333,10 +333,8 @@ class NTLossDotProduct(AbstractNTLoss):
             if (reduction == "mean") | (reduction == "sum"):
                 loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
-                loss = torch.zeros(
-                    int(number_token_positions.sum()),
-                    dtype=logits.dtype,
-                    device=labels.device,
+                loss = torch.zeros_like(
+                    labels, dtype=logits.dtype, device=labels.device
                 )
             else:
                 raise ValueError(f"{reduction} is not a valid value for reduction")
@@ -507,7 +505,9 @@ class NTLoss(AbstractNTLoss):
             if (reduction == "mean") | (reduction == "sum"):
                 loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
-                loss = torch.zeros_like(labels, dtype=logits.dtype)
+                loss = torch.zeros_like(
+                    labels, dtype=logits.dtype, device=labels.device
+                )
             else:
                 raise ValueError(f"{reduction} is not a valid value for reduction")
 
@@ -542,7 +542,7 @@ class NTLoss(AbstractNTLoss):
             loss = torch.dot(loss.flatten(), loss_weights.flatten())
         elif reduction == "none":
             # Cast loss for number tokens back to Tensor of size BS x T
-            loss_ = torch.zeros(number_token_positions.view(-1).size()).to(loss.device)
+            loss_ = torch.zeros(number_token_positions.numel()).to(loss.device)
             loss_[number_token_positions.view(-1)] = loss * loss_weights
             bs, seq_len, _ = logits.size()
             loss = loss_.view(bs, seq_len)

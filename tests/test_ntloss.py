@@ -4,10 +4,11 @@ import random
 import numpy as np
 import pytest
 import torch
-from ntloss import NTLoss, NTLossDotProduct
-from ntloss.utils import is_number
 from tokenizers import Tokenizer, models
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
+
+from ntloss import NTLoss, NTLossDotProduct
+from ntloss.utils import is_number
 
 TOKENIZER = AutoTokenizer.from_pretrained("t5-small")
 VOCAB_SIZE = TOKENIZER.vocab_size
@@ -107,6 +108,9 @@ def test_ntloss_variants(
         assert not math.isnan(loss), "Loss must not be NaN"
         assert loss.item() > 0 or loss_weights.sum() == 0, "Loss must be positive"
     else:
+        assert loss.shape == labels.shape, (
+            "Loss and labels must have same shape if reduction is none"
+        )
         assert isinstance(loss.sum().item(), float), "Loss should be a Python float"
         assert not math.isnan(loss.sum()), "Loss must not be NaN"
         assert loss.sum().item() > 0 or loss_weights.sum() == 0, "Loss must be positive"
