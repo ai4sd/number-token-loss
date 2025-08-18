@@ -41,9 +41,12 @@ pip install ntloss # if you are oldschool
 
 Use like this:
 ```py
-from ntloss import NTLoss as NTL
-ntl = NTL(tokenizer=tokenizer)
-loss = ntl(logits, labels)
+from ntloss import NTLoss
+ntl_fn = NTLoss(tokenizer=tokenizer)
+ntl = ntl_fn(logits, labels)
+
+# We recommend
+loss = cross_entropy(logits, labels) + 0.3 * ntl
 ```
 
 NOTE: `ntloss` is currently in alpha phase and pre-release. Feedback & PRs are very welcome.
