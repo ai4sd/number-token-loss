@@ -7,7 +7,6 @@ import torch
 from ntloss import NTLoss, NTLossDotProduct
 from ntloss.utils import is_number
 from tokenizers import Tokenizer, models
-from torch import Tensor
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 TOKENIZER = AutoTokenizer.from_pretrained("t5-small")
