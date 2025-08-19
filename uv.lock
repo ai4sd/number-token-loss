@@ -538,7 +538,7 @@ wheels = [
 
 [[package]]
 name = "ntloss"
-version = "0.0.3"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "loguru" },
