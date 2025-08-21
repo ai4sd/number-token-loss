@@ -555,3 +555,200 @@ class NTLoss(AbstractNTLoss):
             raise ValueError(f"{reduction} is not a valid value for reduction")
 
         return loss
+    
+class NumberLevelLoss(NTLossDotProduct):
+    """Class for NT losses that produce a token-wise numerical output."""
+
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizer,
+        reweigh: bool = True,
+        loss_function: Callable = F.mse_loss,
+    ):
+        """
+        NTL constructor for the number-level NTLoss.
+
+        Args:
+            tokenizer: Any HuggingFace tokenizer.
+            reweigh: Whether to scale the NTL using the logit weight on
+                number tokens. Defaults to True.
+                NOTE: The ICML paper does *not* use this option which can lead to
+                incorrect loss if most mass is placed outside of the number tokens.
+                Using this will explode the NL-NTL in the current implementation, 
+                so reweighing for the NL-NTL needs to be refined.
+            loss_function: Function to apply on the delta between the ground truth number
+                and the obtained dot product (nt-probs * token-values). Defaults to
+                MSE, but MAE, Huber etc are also compatible.
+
+        """
+        # digit_level must be set to True.
+        super().__init__(
+            tokenizer=tokenizer,
+            digit_level=True,
+            reweigh=reweigh,
+            loss_function=loss_function,
+        )
+    
+    def setup_max_dist(self):
+        """
+        Set up the maximum distance possible between the normalized numerical value prediction and 1.
+        """
+
+        # Since normalized yhat in [0, 1/epsilon), maximum difference 1/epsilon (inf)
+        max_val = torch.tensor([1 / torch.finfo(torch.float64).eps])  # Get largest 'inf' value possible
+
+        # NOTE: Using this in regularization will explode the NL-NTL, so reweighing for the NL-NTL needs to be refined
+
+        # Compute the largest value the loss function used in NT loss computation can get
+        self.max_dist = torch.abs(self.loss_function(max_val, torch.tensor([1])))
+
+    def convert_digits_to_numbers(
+        self,
+        y: FloatTensor,
+        yhat: FloatTensor,
+        number_token_positions: BoolTensor,
+    ):
+        """
+        Set up the order mask for the batch and convert digit-level number tokens to numerical values.
+
+        Args:
+            y: 2D FloatTensor of shape BS x T with target numerical values at digit-level (NaN for non-number tokens).
+            yhat: 2D FloatTensor of shape BS x T containing the predictions for the number tokens at digit-level
+                (includes predictions for non-number tokens).
+            number_token_positions: 2D BoolTensor (BS x T) containing locations of number tokens at digit-level.
+
+        Returns:
+            y: 2D FloatTensor of shape BS x T with target numerical values at number-level (NaN for non-number tokens).
+            yhat: 2D FloatTensor of shape BS x T containing the predictions for the number tokens at number-level 
+                (includes predictions for non-number tokens).
+            number_token_positions: 2D BoolTensor (BS x T) containing locations of numerical values in y and yhat.
+        """
+
+        # Set up empty order_mask: will store power with which to scale digits
+        order_mask = torch.zeros_like(y, dtype=yhat.dtype, device=y.device)
+    
+        # Extract numbers using number blocks
+        for i in range(y.shape[0]):
+            # For every item in batch: assume not starting with number block
+            in_number_block = False
+            end_digit = -1
+
+            # Loop from end of sequence to beginning to extract numbers
+            for j in range(y.shape[1] - 1, -1, -1):
+                # Already in number block and a digit: increase order magnitude
+                if in_number_block and number_token_positions[i,j]:
+                    order_mask[i,j] = order_mask[i,j+1] + 1
+                
+                # Not in number block: first instance of number = end digit
+                elif number_token_positions[i,j]:
+                    in_number_block = True
+                    end_digit = j+1
+                
+                # In number block, but not a digit: end of number_block
+                elif in_number_block:
+                    in_number_block = False
+
+                    # Reuse y and yhat tensors to store full numbers
+                    y[i, j+1] = torch.sum(
+                        y[i, j+1:end_digit]
+                        * torch.pow(10, order_mask[i, j+1:end_digit])
+                    )
+                    # Make sure non-relevant numerical values are turned into NaN
+                    # This indicates non-number tokens
+                    y[i, j+2:end_digit] = y[i, j]
+
+                    yhat[i, j+1] = torch.sum(
+                        yhat[i, j+1:end_digit]
+                        * torch.pow(10, order_mask[i, j+1:end_digit])
+                    )
+        
+        # Update mask with locations of number tokens
+        number_token_positions = ~torch.isnan(y)
+
+        return y, yhat, number_token_positions
+
+    def forward(
+        self,
+        logits: FloatTensor,
+        labels: LongTensor,
+        loss_weights: Optional[Tensor] = None,
+        reduction: str = "mean",
+        ignore_index: int = -100,
+    ) -> Tensor:
+        """
+        Computes the NTL based on the dot product between token values and their probs.
+
+        Args:
+            logits: 3D Tensor of shape BS x T x V.
+            labels: 2D Tensor of shape BS x T.
+            loss_weights: 2D Optional tensor of BS x T with token-wise loss weights.
+            reduction: Optional string specifying the reduction to apply to the
+                output. Defaults to "mean", options are "mean", "sum", "none".
+            ignore_index: The token ID to ignore in the labels. Defaults to -100.
+
+        Returns:
+            Loss tensor
+                0-D if reduction=="mean"|"sum"
+                BS x T if reduction=="none"
+        """
+        self._validate_inputs(logits, labels, loss_weights)
+
+        y, loss_weights = self._prepare_number_token_targets(
+            labels, loss_weights, ignore_index
+        )
+        loss_weights = loss_weights.to(logits.dtype)
+        number_token_positions = cast(BoolTensor, ~torch.isnan(y))
+
+        # If no digit tokens in batch, or total of the relevant loss weights is zero, no need for upcoming calculations
+        if not number_token_positions.any() or not loss_weights.any():
+            if (reduction == "mean") | (reduction == "sum"):
+                loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
+            elif reduction == "none":
+                loss = torch.zeros_like(
+                    labels, dtype=logits.dtype, device=labels.device
+                )
+            else:
+                raise ValueError(f"{reduction} is not a valid value for reduction")
+
+            return loss
+
+        yhat = self._get_dot_product(logits=logits)
+
+        y, yhat, number_token_positions = self.convert_digits_to_numbers(y, yhat, number_token_positions)
+
+        # Normalize yhat using y so relative error can be computed using loss function
+        yhat = torch.div(
+            yhat[number_token_positions], y[number_token_positions].clamp_min(torch.finfo(y.dtype).eps)
+        )
+
+        # Apply specified loss function to normalized yhat
+        loss = self.loss_function(yhat, torch.ones_like(yhat), reduction="none")
+
+        # If reweigh: compute weights for NTL based on logits
+        if self.reweigh:
+            loss = self.reweigh_fn(
+                logits=logits, loss=loss, number_token_positions=number_token_positions
+            )
+
+        if reduction == "mean":
+            # Mean pooling (weighted by loss mask)
+            loss = torch.dot(
+                loss.flatten(), loss_weights.flatten()
+            ) / loss_weights.sum().clamp_min(torch.finfo(loss.dtype).eps)
+        elif reduction == "sum":
+            loss = torch.dot(loss.flatten(), loss_weights.flatten())
+        elif reduction == "none":
+            # Cast loss for number tokens back to Tensor of size BS x T
+            loss_ = torch.zeros(number_token_positions.numel()).to(loss.device)
+            loss_[number_token_positions.view(-1)] = loss * loss_weights
+            bs, seq_len, _ = logits.size()
+            loss = loss_.view(bs, seq_len)
+
+            assert torch.sum(loss[~number_token_positions]) == 0, (
+                "NumberTokenLoss computed for non-digit tokens!"
+            )
+
+        else:
+            raise ValueError(f"{reduction} is not a valid value for reduction")
+
+        return loss
