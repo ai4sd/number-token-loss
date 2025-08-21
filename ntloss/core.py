@@ -555,7 +555,8 @@ class NTLoss(AbstractNTLoss):
             raise ValueError(f"{reduction} is not a valid value for reduction")
 
         return loss
-    
+
+
 class NumberLevelLoss(NTLossDotProduct):
     """Class for NT losses that produce a token-wise numerical output."""
 
@@ -574,7 +575,7 @@ class NumberLevelLoss(NTLossDotProduct):
                 number tokens. Defaults to True.
                 NOTE: The ICML paper does *not* use this option which can lead to
                 incorrect loss if most mass is placed outside of the number tokens.
-                Using this will explode the NL-NTL in the current implementation, 
+                Using this will explode the NL-NTL in the current implementation,
                 so reweighing for the NL-NTL needs to be refined.
             loss_function: Function to apply on the delta between the ground truth number
                 and the obtained dot product (nt-probs * token-values). Defaults to
@@ -588,14 +589,16 @@ class NumberLevelLoss(NTLossDotProduct):
             reweigh=reweigh,
             loss_function=loss_function,
         )
-    
+
     def setup_max_dist(self):
         """
         Set up the maximum distance possible between the normalized numerical value prediction and 1.
         """
 
         # Since normalized yhat in [0, 1/epsilon), maximum difference 1/epsilon (inf)
-        max_val = torch.tensor([1 / torch.finfo(torch.float64).eps])  # Get largest 'inf' value possible
+        max_val = torch.tensor(
+            [1 / torch.finfo(torch.float64).eps]
+        )  # Get largest 'inf' value possible
 
         # NOTE: Using this in regularization will explode the NL-NTL, so reweighing for the NL-NTL needs to be refined
 
@@ -619,14 +622,14 @@ class NumberLevelLoss(NTLossDotProduct):
 
         Returns:
             y: 2D FloatTensor of shape BS x T with target numerical values at number-level (NaN for non-number tokens).
-            yhat: 2D FloatTensor of shape BS x T containing the predictions for the number tokens at number-level 
+            yhat: 2D FloatTensor of shape BS x T containing the predictions for the number tokens at number-level
                 (includes predictions for non-number tokens).
             number_token_positions: 2D BoolTensor (BS x T) containing locations of numerical values in y and yhat.
         """
 
         # Set up empty order_mask: will store power with which to scale digits
         order_mask = torch.zeros_like(y, dtype=yhat.dtype, device=y.device)
-    
+
         # Extract numbers using number blocks
         for i in range(y.shape[0]):
             # For every item in batch: assume not starting with number block
@@ -636,34 +639,34 @@ class NumberLevelLoss(NTLossDotProduct):
             # Loop from end of sequence to beginning to extract numbers
             for j in range(y.shape[1] - 1, -1, -1):
                 # Already in number block and a digit: increase order magnitude
-                if in_number_block and number_token_positions[i,j]:
-                    order_mask[i,j] = order_mask[i,j+1] + 1
-                
+                if in_number_block and number_token_positions[i, j]:
+                    order_mask[i, j] = order_mask[i, j + 1] + 1
+
                 # Not in number block: first instance of number = end digit
-                elif number_token_positions[i,j]:
+                elif number_token_positions[i, j]:
                     in_number_block = True
-                    end_digit = j+1
-                
+                    end_digit = j + 1
+
                 # In number block, but not a digit: end of number_block
                 elif in_number_block:
                     in_number_block = False
 
                     # Reuse y and yhat tensors to store full numbers
-                    y[i, j+1] = torch.sum(
-                        y[i, j+1:end_digit]
-                        * torch.pow(10, order_mask[i, j+1:end_digit])
+                    y[i, j + 1] = torch.sum(
+                        y[i, j + 1 : end_digit]
+                        * torch.pow(10, order_mask[i, j + 1 : end_digit])
                     )
                     # Make sure non-relevant numerical values are turned into NaN
                     # This indicates non-number tokens
-                    y[i, j+2:end_digit] = y[i, j]
+                    y[i, j + 2 : end_digit] = y[i, j]
 
-                    yhat[i, j+1] = torch.sum(
-                        yhat[i, j+1:end_digit]
-                        * torch.pow(10, order_mask[i, j+1:end_digit])
+                    yhat[i, j + 1] = torch.sum(
+                        yhat[i, j + 1 : end_digit]
+                        * torch.pow(10, order_mask[i, j + 1 : end_digit])
                     )
-        
+
         # Update mask with locations of number tokens
-        number_token_positions = ~torch.isnan(y)
+        number_token_positions = cast(BoolTensor, ~torch.isnan(y))
 
         return y, yhat, number_token_positions
 
@@ -714,11 +717,17 @@ class NumberLevelLoss(NTLossDotProduct):
 
         yhat = self._get_dot_product(logits=logits)
 
-        y, yhat, number_token_positions = self.convert_digits_to_numbers(y, yhat, number_token_positions)
+        y, yhat, number_token_positions = self.convert_digits_to_numbers(
+            y, yhat, number_token_positions
+        )
 
         # Normalize yhat using y so relative error can be computed using loss function
-        yhat = torch.div(
-            yhat[number_token_positions], y[number_token_positions].clamp_min(torch.finfo(y.dtype).eps)
+        yhat = cast(
+            FloatTensor,
+            torch.div(
+                yhat[number_token_positions],
+                y[number_token_positions].clamp_min(torch.finfo(y.dtype).eps),
+            ),
         )
 
         # Apply specified loss function to normalized yhat
