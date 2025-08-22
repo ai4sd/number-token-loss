@@ -132,8 +132,8 @@ class AbstractNTLoss(ABC):
 
         return loss
 
+    @staticmethod
     def _validate_inputs(
-        self,
         logits: FloatTensor,
         labels: Optional[LongTensor],
         loss_weights: Optional[Tensor],
