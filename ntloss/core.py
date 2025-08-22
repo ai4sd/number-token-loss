@@ -181,7 +181,7 @@ class AbstractNTLoss(ABC):
             y: 2D Float Tensor of shape BS x T with target numeric values (NaN for non-number tokens).
             loss_weight: 1D Tensor with a potentially individual loss weight for each number token position.
         """
-        labels = cast(LongTensor, labels.clone().masked_fill(labels == ignore_index, 0))
+        labels = cast(LongTensor, labels.masked_fill(labels == ignore_index, 0))
         # Create a mask to filter out non-digit tokens
         y = self.number_values[labels]
         number_token_positions = ~torch.isnan(y)
