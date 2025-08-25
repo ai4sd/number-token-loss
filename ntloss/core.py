@@ -219,7 +219,7 @@ class AbstractNTLoss(ABC):
 
         Returns:
             A Tensor representing the reduced loss:
-                - 0-D tensor if `reduction` is "mean" or "sum".
+                - 0D tensor if `reduction` is "mean" or "sum".
                 - 2D Tensor of shape BS x T if `reduction` is "none".
         """
         if reduction == "mean":
@@ -370,7 +370,7 @@ class NTLossDotProduct(AbstractNTLoss):
 
         Returns:
             Loss tensor
-                0-D if reduction=="mean"|"sum"
+                OD if reduction=="mean"|"sum"
                 BS x T if reduction=="none"
         """
         self._validate_inputs(logits, labels, loss_weights)
@@ -528,7 +528,7 @@ class NTLoss(AbstractNTLoss):
 
         Returns:
             Loss tensor
-                0-D if reduction=="mean"|"sum"
+                OD if reduction=="mean"|"sum"
                 BS x T if reduction=="none"
 
         """
