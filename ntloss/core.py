@@ -57,14 +57,10 @@ class AbstractNTLoss(ABC):
         for token, id in vocab.items():
             if is_number(token, finite=True):
                 if self.digit_level:
-                    stripped_token = token.strip()
                     # NOTE: This check ensures number token value only occurs for digits, not for multi-digit numbers (123)
                     # This stabilizes training with NTL. Can be altered though, see paper experiments.
-                    if (
-                        stripped_token.isascii()  # Exclude tokens that are numbers in other languages like ႘
-                        and -1 <= float(token) <= 9
-                        and len(stripped_token) == 1
-                    ):
+                    # Excludes tokens that are numbers in other languages like ႘ and tokens with space pre-/postfix like ` 2`.
+                    if token.isascii() and -1 <= float(token) <= 9 and len(token) == 1:
                         self.number_values[id] = float(token)
                 else:
                     self.number_values[id] = float(token)
@@ -72,9 +68,9 @@ class AbstractNTLoss(ABC):
         self.is_number_token = ~torch.isnan(self.number_values)
         self.number_values_dense = self.number_values[self.is_number_token]
 
-        if self.digit_level:
-            assert len(self.number_values_dense) == 10, (
-                f"You requested digit-level but more than 10 number tokens were identified: {self.number_values_dense}"
+        if self.digit_level and (num_nts := len(self.number_values_dense)) != 10:
+            logger.error(
+                f"You requested digit-level but {num_nts} number tokens were identified: {self.number_values_dense}"
             )
 
     @abstractmethod
@@ -191,14 +187,14 @@ class AbstractNTLoss(ABC):
             else torch.ones_like(labels, device=labels.device)[number_token_positions]
         )
         return cast(FloatTensor, y), loss_weights
-    
+
     @staticmethod
     def _apply_reduction(
-        loss: Tensor, 
-        reduction: str, 
-        loss_weights: Tensor, 
-        number_token_positions: Tensor, 
-        logits: Tensor
+        loss: Tensor,
+        reduction: str,
+        loss_weights: Tensor,
+        number_token_positions: Tensor,
+        logits: Tensor,
     ) -> Tensor:
         """
         Applies the specified reduction type to the calculated loss.

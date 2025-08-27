@@ -1,6 +1,6 @@
 [project]
 name = "ntloss"
-version = "0.1.1"
+version = "0.1.2"
 description = "Number Token Loss - A regression-alike loss to improve numerical reasoning in language models"
 readme = "README.md"                    
 requires-python = ">=3.10"
