@@ -66,6 +66,9 @@ class AbstractNTLoss(ABC):
                     self.number_values[id] = float(token)
 
         self.is_number_token = ~torch.isnan(self.number_values)
+        if self.is_number_token.sum() == len(self.is_number_token):
+            raise ValueError("At least one token needs to be not a number, otherwise `ignore_index` cannot be set up safely")
+        self.nan_id = torch.where(~self.is_number_token)[0][0].item()
         self.number_values_dense = self.number_values[self.is_number_token]
 
         if self.digit_level and (num_nts := len(self.number_values_dense)) != 10:
@@ -177,7 +180,7 @@ class AbstractNTLoss(ABC):
             y: 2D Float Tensor of shape BS x T with target numeric values (NaN for non-number tokens).
             loss_weight: 1D Tensor with a potentially individual loss weight for each number token position.
         """
-        labels = cast(LongTensor, labels.masked_fill(labels == ignore_index, 0))
+        labels = cast(LongTensor, labels.masked_fill(labels == ignore_index, self.nan_id))
         # Create a mask to filter out non-digit tokens
         y = self.number_values[labels]
         number_token_positions = ~torch.isnan(y)
