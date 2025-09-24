@@ -606,6 +606,15 @@ def test_number_level_ntl_scientific_notation(reweigh: bool):
     assert loss_last[0].item() == 0 and loss_last[2:].sum() == 0
     assert loss_last[1].item() < loss_middle[1].item()
 
+    # Test loss weights
+    loss_weights = torch.rand_like(labels, dtype=logits_last_wrong.dtype)
+    loss_with_weights = loss_fn(
+        logits_last_wrong, labels, loss_weights=loss_weights, reduction="none"
+    ).squeeze()
+    assert loss_with_weights[1].item() > 0
+    assert loss_with_weights[0].item() == 0 and loss_with_weights[2:].sum() == 0
+    assert loss_with_weights[1].item() < loss_last[1].item()
+
     # If we aggregate, this must still hold
     for reduction in ["mean", "sum"]:
         loss_middle = loss_fn(
