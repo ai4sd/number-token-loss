@@ -1,5 +1,6 @@
 import math
 import random
+from copy import deepcopy
 
 import numpy as np
 import pytest
@@ -7,11 +8,28 @@ import torch
 from tokenizers import Tokenizer, models
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
-from ntloss import NTLoss, NTLossDotProduct
+from ntloss import NTLoss, NTLossDotProduct, NumberLevelLoss
 from ntloss.utils import is_number
 
 TOKENIZER = AutoTokenizer.from_pretrained("t5-small")
 VOCAB_SIZE = TOKENIZER.vocab_size
+
+
+def get_device(use_cpu: bool = False) -> str:
+    """Get available device.
+
+    Returns:
+        Device
+    """
+    if not use_cpu:
+        if torch.cuda.is_available():
+            return "cuda"
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            return "mps"
+    return "cpu"
+
+
+DEVICE = get_device()
 
 
 def make_logits(token_logit_value_dicts):
@@ -24,14 +42,14 @@ def make_logits(token_logit_value_dicts):
     for i, tok_dict in enumerate(token_logit_value_dicts):
         for tok_id, logit in tok_dict.items():
             logits[0, i, tok_id] = logit
-    return logits
+    return logits.to(device=DEVICE)
 
 
 def dirac_logits(ids, peak_id, peak_value, vocab_size=VOCAB_SIZE):
     """Perfectly confident distribution (all mass on one token)."""
     logits = torch.full((1, 1, vocab_size), -1e6, dtype=torch.float32)
     logits[0, 0, peak_id] = 0.0
-    return logits
+    return logits.to(device=DEVICE)
 
 
 def gaussian_logits(ids, peak_id, peak_value, vocab_size=VOCAB_SIZE, sigma=1e-1):
@@ -42,7 +60,7 @@ def gaussian_logits(ids, peak_id, peak_value, vocab_size=VOCAB_SIZE, sigma=1e-1)
     # Assumes that ids are ordered by their numerical value
     for idx, tok_id in enumerate(ids):
         logits[0, 0, tok_id] = -1 * np.abs((idx - peak_value) ** 2 / (2 * sigma**2))
-    return logits
+    return logits.to(device=DEVICE)
 
 
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
@@ -90,7 +108,7 @@ def test_ntloss_variants(
 
     # build labels tensor shape (1 x T)
     label_ids = [TOKENIZER.convert_tokens_to_ids(tok) for tok in label_tokens]
-    labels = torch.tensor([label_ids], dtype=torch.long)
+    labels = torch.tensor([label_ids], dtype=torch.long, device=logits.device)
 
     # set up loss weights
     if loss_weight is None:
@@ -155,7 +173,7 @@ def test_correct_minimum(loss_class, logit_builder):
         labels = torch.tensor([[gt_token_id]], dtype=torch.long)
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx)
-            loss = loss_fn(logits, labels)
+            loss = loss_fn(logits, labels.to(device=logits.device))
 
             losses[i, peak_idx] = loss.item()
 
@@ -298,7 +316,7 @@ def test_correct_squashing(loss_class, logit_builder, squash_factor):
         labels = torch.tensor([[gt_token_id]], dtype=torch.long)
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx)
-            loss = loss_fn(logits, labels)
+            loss = loss_fn(logits, labels.to(device=logits.device))
             losses[i, peak_idx] = loss.item()
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
@@ -384,7 +402,7 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
         labels = torch.tensor([[gt_token_id]], dtype=torch.long)
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx, vocab_size)
-            loss = loss_fn(logits, labels)
+            loss = loss_fn(logits, labels.to(device=logits.device))
             losses[i, peak_idx] = loss.item()
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
@@ -412,7 +430,7 @@ def test_logit_scaling(loss_class, logit_builder):
         labels = torch.tensor([[gt_token_id]], dtype=torch.long)
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx)
-            loss = loss_fn(logits, labels)
+            loss = loss_fn(logits, labels.to(device=logits.device))
             losses[i, peak_idx] = loss.item()
 
         # Ensure that if GT is number and mass is on text, loss is at least as
@@ -441,10 +459,162 @@ def test_logit_scaling(loss_class, logit_builder):
 
 def test_digit_level():
     # Ensure that 10 Number tokens are extracted if digit_level is set to True
-    loss_class = NTLoss(tokenizer=TOKENIZER, digit_level=True)
+    NEW_TOKENIZER = deepcopy(TOKENIZER)
+    loss_class = NTLoss(tokenizer=NEW_TOKENIZER, digit_level=True)
     assert len(loss_class.number_values_dense) == 10
 
     # Add some tokens that are in right range but should still be ignored
-    TOKENIZER.add_tokens([" 2"])
-    loss_class = NTLoss(tokenizer=TOKENIZER, digit_level=True)
+    NEW_TOKENIZER.add_tokens([" 2"])
+    loss_class = NTLoss(tokenizer=NEW_TOKENIZER, digit_level=True)
     assert len(loss_class.number_values_dense) == 10
+
+
+def test_number_level_ntl():
+    seq_tokens = ["A", "1", "2", "3", "B", "4", "5"]
+    label_ids = TOKENIZER.convert_tokens_to_ids(seq_tokens)
+    assert all(x is not None and x >= 0 for x in label_ids), "Missing token id"
+    labels = torch.tensor([label_ids], dtype=torch.long)
+
+    def one_hot_pos(tok_id, logit=50.0):
+        return {tok_id: logit}
+
+    # Perfect prediction: put all mass on the correct digit at each digit position.
+    logits_dicts_perfect = []
+    for tok in seq_tokens:
+        tid = TOKENIZER.convert_tokens_to_ids(tok)
+        # for non-digits, it doesn't matter; keep mass on that token to be safe
+        logits_dicts_perfect.append(one_hot_pos(tid, 50.0))
+    logits_perfect = make_logits(logits_dicts_perfect)
+    labels = labels.to(device=logits_perfect.device)
+
+    loss_fn = NumberLevelLoss(TOKENIZER, reweigh=False)
+    loss = loss_fn(logits_perfect, labels, reduction="none")
+    assert loss.shape == labels.shape
+    assert loss.sum().item() == 0
+
+    # Sanity: perfect case should be exactly zero for mean/sum as well
+    loss = loss_fn(logits_perfect, labels, reduction="mean")
+    assert loss.sum().item() == 0
+    loss = loss_fn(logits_perfect, labels, reduction="sum")
+    assert loss.sum().item() == 0
+
+    # Now make a single digit wrong: change the middle digit "2" -> predict "9" instead.
+    wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
+    wrong_logits_dicts[2] = {TOKENIZER.convert_tokens_to_ids("9"): 50.0}
+    logits_middle_wrong = make_logits(wrong_logits_dicts)
+
+    loss_middle = loss_fn(logits_middle_wrong, labels, reduction="none").squeeze()
+    # Check that loss for that item is nonzero
+    assert loss_middle[1].item() > 0
+    # All others should have zero loss
+    assert loss_middle[0].item() == 0 and loss_middle[2:].sum() == 0
+
+    # Now make the first digit wrong and check whether error is higher
+    wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
+    wrong_logits_dicts[1] = {TOKENIZER.convert_tokens_to_ids("9"): 50.0}
+    logits_first_wrong = make_logits(wrong_logits_dicts)
+
+    loss_first = loss_fn(logits_first_wrong, labels, reduction="none").squeeze()
+    assert loss_first[1].item() > 0
+    assert loss_first[0].item() == 0 and loss_first[2:].sum() == 0
+    assert loss_first[1].item() > loss_middle[1].item()
+
+    # Now make the third digit wrong and check whether error is lower
+    wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
+    wrong_logits_dicts[3] = {TOKENIZER.convert_tokens_to_ids("5"): 50.0}
+    logits_last_wrong = make_logits(wrong_logits_dicts)
+
+    loss_last = loss_fn(logits_last_wrong, labels, reduction="none").squeeze()
+    assert loss_last[1].item() > 0
+    assert loss_last[0].item() == 0 and loss_last[2:].sum() == 0
+    assert loss_last[1].item() < loss_middle[1].item()
+
+    # If we aggregate, this must still hold
+    for reduction in ["mean", "sum"]:
+        loss_middle = loss_fn(
+            logits_middle_wrong, labels, reduction=reduction
+        ).squeeze()
+        loss_last = loss_fn(logits_last_wrong, labels, reduction=reduction).squeeze()
+        loss_first = loss_fn(logits_first_wrong, labels, reduction=reduction).squeeze()
+
+        assert loss_middle.item() > 0.0
+        assert loss_last.item() > 0.0
+        assert loss_first.item() > 0.0
+        assert loss_first.item() > loss_middle.item() > loss_last.item()
+
+
+@pytest.mark.parametrize("reweigh", [True, False])
+def test_number_level_ntl_scientific_notation(reweigh: bool):
+    seq_tokens = ["A", "6", ".", "5", "1", "E", "+", "0", "2"]
+    label_ids = TOKENIZER.convert_tokens_to_ids(seq_tokens)
+    assert all(x is not None and x >= 0 for x in label_ids), "Missing token id"
+    labels = torch.tensor([label_ids], dtype=torch.long)
+
+    def one_hot_pos(tok_id, logit=50.0):
+        return {tok_id: logit}
+
+    # Perfect prediction: put all mass on the correct digit at each digit position.
+    logits_dicts_perfect = []
+    for tok in seq_tokens:
+        tid = TOKENIZER.convert_tokens_to_ids(tok)
+        # for non-digits, it doesn't matter; keep mass on that token to be safe
+        logits_dicts_perfect.append(one_hot_pos(tid, 50.0))
+    logits_perfect = make_logits(logits_dicts_perfect)
+    logits_perfect.requires_grad = True
+    labels = labels.to(device=logits_perfect.device)
+
+    loss_fn = NumberLevelLoss(TOKENIZER, reweigh=reweigh, float_level=True)
+    loss = loss_fn(logits_perfect, labels, reduction="none")
+    assert loss.shape == labels.shape
+    assert loss.sum().item() == 0
+    assert loss.grad_fn is not None, "Loss is not differentiable!"
+
+    # Sanity: perfect case should be exactly zero for mean/sum as well
+    loss = loss_fn(logits_perfect, labels, reduction="mean")
+    assert loss.sum().item() == 0
+    loss = loss_fn(logits_perfect, labels, reduction="sum")
+    assert loss.sum().item() == 0
+
+    # Now make a single digit in 6.51 wrong: change the middle digit "5" -> predict "4" instead.
+    wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
+    wrong_logits_dicts[3] = {TOKENIZER.convert_tokens_to_ids("6"): 50.0}
+    logits_middle_wrong = make_logits(wrong_logits_dicts)
+
+    loss_middle = loss_fn(logits_middle_wrong, labels, reduction="none").squeeze()
+    # Check that loss for that item is nonzero
+    assert loss_middle[1].item() > 0
+    # All others should have zero loss
+    assert loss_middle[0].item() == 0 and loss_middle[2:].sum() == 0
+
+    # Now make the first digit wrong and check whether error is higher
+    wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
+    wrong_logits_dicts[1] = {TOKENIZER.convert_tokens_to_ids("7"): 50.0}
+    logits_first_wrong = make_logits(wrong_logits_dicts)
+
+    loss_first = loss_fn(logits_first_wrong, labels, reduction="none").squeeze()
+    assert loss_first[1].item() > 0
+    assert loss_first[0].item() == 0 and loss_first[2:].sum() == 0
+    assert loss_first[1].item() > loss_middle[1].item()
+
+    # Now make the third digit wrong and check whether error is lower
+    wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
+    wrong_logits_dicts[4] = {TOKENIZER.convert_tokens_to_ids("2"): 50.0}
+    logits_last_wrong = make_logits(wrong_logits_dicts)
+
+    loss_last = loss_fn(logits_last_wrong, labels, reduction="none").squeeze()
+    assert loss_last[1].item() > 0
+    assert loss_last[0].item() == 0 and loss_last[2:].sum() == 0
+    assert loss_last[1].item() < loss_middle[1].item()
+
+    # If we aggregate, this must still hold
+    for reduction in ["mean", "sum"]:
+        loss_middle = loss_fn(
+            logits_middle_wrong, labels, reduction=reduction
+        ).squeeze()
+        loss_last = loss_fn(logits_last_wrong, labels, reduction=reduction).squeeze()
+        loss_first = loss_fn(logits_first_wrong, labels, reduction=reduction).squeeze()
+
+        assert loss_middle.item() > 0.0
+        assert loss_last.item() > 0.0
+        assert loss_first.item() > 0.0
+        assert loss_first.item() > loss_middle.item() > loss_last.item()
