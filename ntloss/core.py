@@ -57,24 +57,23 @@ class AbstractNTLoss(ABC):
         for token, id in vocab.items():
             if is_number(token, finite=True):
                 if self.digit_level:
-                    stripped_token = token.strip()
                     # NOTE: This check ensures number token value only occurs for digits, not for multi-digit numbers (123)
                     # This stabilizes training with NTL. Can be altered though, see paper experiments.
-                    if (
-                        stripped_token.isascii()  # Exclude tokens that are numbers in other languages like ႘
-                        and -1 <= float(token) <= 9
-                        and len(stripped_token) == 1
-                    ):
+                    # Excludes tokens that are numbers in other languages like ႘ and tokens with space pre-/postfix like ` 2`.
+                    if token.isascii() and -1 <= float(token) <= 9 and len(token) == 1:
                         self.number_values[id] = float(token)
                 else:
                     self.number_values[id] = float(token)
 
         self.is_number_token = ~torch.isnan(self.number_values)
+        if self.is_number_token.sum() == len(self.is_number_token):
+            raise ValueError("At least one token needs to be not a number, otherwise `ignore_index` cannot be set up safely")
+        self.nan_id = torch.where(~self.is_number_token)[0][0].item()
         self.number_values_dense = self.number_values[self.is_number_token]
 
-        if self.digit_level:
-            assert len(self.number_values_dense) == 10, (
-                f"You requested digit-level but more than 10 number tokens were identified: {self.number_values_dense}"
+        if self.digit_level and (num_nts := len(self.number_values_dense)) != 10:
+            logger.error(
+                f"You requested digit-level but {num_nts} number tokens were identified: {self.number_values_dense}"
             )
 
     @abstractmethod
@@ -132,8 +131,8 @@ class AbstractNTLoss(ABC):
 
         return loss
 
+    @staticmethod
     def _validate_inputs(
-        self,
         logits: FloatTensor,
         labels: Optional[LongTensor],
         loss_weights: Optional[Tensor],
@@ -181,7 +180,7 @@ class AbstractNTLoss(ABC):
             y: 2D Float Tensor of shape BS x T with target numeric values (NaN for non-number tokens).
             loss_weight: 1D Tensor with a potentially individual loss weight for each number token position.
         """
-        labels = cast(LongTensor, labels.clone().masked_fill(labels == ignore_index, 0))
+        labels = cast(LongTensor, labels.masked_fill(labels == ignore_index, self.nan_id))
         # Create a mask to filter out non-digit tokens
         y = self.number_values[labels]
         number_token_positions = ~torch.isnan(y)
@@ -191,6 +190,59 @@ class AbstractNTLoss(ABC):
             else torch.ones_like(labels, device=labels.device)[number_token_positions]
         )
         return cast(FloatTensor, y), loss_weights
+
+    @staticmethod
+    def _apply_reduction(
+        loss: Tensor,
+        reduction: str,
+        loss_weights: Tensor,
+        number_token_positions: Tensor,
+        logits: Tensor,
+    ) -> Tensor:
+        """
+        Applies the specified reduction type to the calculated loss.
+
+        This method handles 3 types of reduction: "mean", "sum", and "none".
+        For "mean" and "sum", it applies weighting using `loss_weights`.
+        For "none", it reshapes the loss back to the original batch and sequence
+        dimensions.
+
+        Args:
+            loss: 1D Tensor containing the loss for each number token in the batch.
+            reduction: The reduction method ("mean", "sum", or "none").
+            loss_weights: 1D Tensor with a loss weight for each number token.
+            number_token_positions: 2D boolean tensor of shape BS x T indicating
+                the positions of number tokens.
+            logits: 3D Tensor of shape BS x T x V, used to get the original shape
+                for the "none" reduction.
+
+        Returns:
+            A Tensor representing the reduced loss:
+                - 0D tensor if `reduction` is "mean" or "sum".
+                - 2D Tensor of shape BS x T if `reduction` is "none".
+        """
+        if reduction == "mean":
+            # Mean pooling (weighted by loss mask)
+            loss = torch.dot(
+                loss.flatten(), loss_weights.flatten()
+            ) / loss_weights.sum().clamp_min(torch.finfo(loss.dtype).eps)
+        elif reduction == "sum":
+            loss = torch.dot(loss.flatten(), loss_weights.flatten())
+        elif reduction == "none":
+            # Cast loss for number tokens back to Tensor of size BS x T
+            loss_ = torch.zeros(number_token_positions.numel()).to(loss.device)
+            loss_[number_token_positions.view(-1)] = loss * loss_weights
+            bs, seq_len, _ = logits.size()
+            loss = loss_.view(bs, seq_len)
+
+            assert torch.sum(loss[~number_token_positions]) == 0, (
+                "NumberTokenLoss computed for non-digit tokens!"
+            )
+
+        else:
+            raise ValueError(f"{reduction} is not a valid value for reduction")
+
+        return loss
 
 
 class NTLossDotProduct(AbstractNTLoss):
@@ -317,7 +369,7 @@ class NTLossDotProduct(AbstractNTLoss):
 
         Returns:
             Loss tensor
-                0-D if reduction=="mean"|"sum"
+                OD if reduction=="mean"|"sum"
                 BS x T if reduction=="none"
         """
         self._validate_inputs(logits, labels, loss_weights)
@@ -354,26 +406,13 @@ class NTLossDotProduct(AbstractNTLoss):
                 logits=logits, loss=loss, number_token_positions=number_token_positions
             )
 
-        if reduction == "mean":
-            # Mean pooling (weighted by loss mask)
-            loss = torch.dot(
-                loss.flatten(), loss_weights.flatten()
-            ) / loss_weights.sum().clamp_min(torch.finfo(loss.dtype).eps)
-        elif reduction == "sum":
-            loss = torch.dot(loss.flatten(), loss_weights.flatten())
-        elif reduction == "none":
-            # Cast loss for number tokens back to Tensor of size BS x T
-            loss_ = torch.zeros(
-                number_token_positions.numel(), device=loss.device, dtype=loss.dtype
-            )
-            loss_[number_token_positions.view(-1)] = loss * loss_weights
-            bs, seq_len, _ = logits.size()
-            loss = loss_.view(bs, seq_len)
-            assert torch.sum(loss[~number_token_positions]) == 0, (
-                "NTLossDotProduct computed for non-digit tokens!"
-            )
-        else:
-            raise ValueError(f"{reduction} is not a valid value for reduction")
+        loss = self._apply_reduction(
+            loss=loss,
+            reduction=reduction,
+            loss_weights=loss_weights,
+            number_token_positions=number_token_positions,
+            logits=logits,
+        )
 
         return loss
 
@@ -488,7 +527,7 @@ class NTLoss(AbstractNTLoss):
 
         Returns:
             Loss tensor
-                0-D if reduction=="mean"|"sum"
+                OD if reduction=="mean"|"sum"
                 BS x T if reduction=="none"
 
         """
@@ -533,26 +572,13 @@ class NTLoss(AbstractNTLoss):
                 logits=logits, loss=loss, number_token_positions=number_token_positions
             )
 
-        if reduction == "mean":
-            # Mean pooling (weighted by loss mask)
-            loss = torch.dot(
-                loss.flatten(), loss_weights.flatten()
-            ) / loss_weights.sum().clamp_min(torch.finfo(loss.dtype).eps)
-        elif reduction == "sum":
-            loss = torch.dot(loss.flatten(), loss_weights.flatten())
-        elif reduction == "none":
-            # Cast loss for number tokens back to Tensor of size BS x T
-            loss_ = torch.zeros(number_token_positions.numel()).to(loss.device)
-            loss_[number_token_positions.view(-1)] = loss * loss_weights
-            bs, seq_len, _ = logits.size()
-            loss = loss_.view(bs, seq_len)
-
-            assert torch.sum(loss[~number_token_positions]) == 0, (
-                "NumberTokenLoss computed for non-digit tokens!"
-            )
-
-        else:
-            raise ValueError(f"{reduction} is not a valid value for reduction")
+        loss = self._apply_reduction(
+            loss=loss,
+            reduction=reduction,
+            loss_weights=loss_weights,
+            number_token_positions=number_token_positions,
+            logits=logits,
+        )
 
         return loss
 
