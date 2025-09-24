@@ -1,12 +1,10 @@
 import math
 import random
 from copy import deepcopy
-from typing import Callable
 
 import numpy as np
 import pytest
 import torch
-import torch.nn.functional as F
 from tokenizers import Tokenizer, models
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
@@ -15,6 +13,23 @@ from ntloss.utils import is_number
 
 TOKENIZER = AutoTokenizer.from_pretrained("t5-small")
 VOCAB_SIZE = TOKENIZER.vocab_size
+
+
+def get_device(use_cpu: bool = False) -> str:
+    """Get available device.
+
+    Returns:
+        Device
+    """
+    if not use_cpu:
+        if torch.cuda.is_available():
+            return "cuda"
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            return "mps"
+    return "cpu"
+
+
+DEVICE = get_device()
 
 
 def make_logits(token_logit_value_dicts):
@@ -27,14 +42,14 @@ def make_logits(token_logit_value_dicts):
     for i, tok_dict in enumerate(token_logit_value_dicts):
         for tok_id, logit in tok_dict.items():
             logits[0, i, tok_id] = logit
-    return logits
+    return logits.to(device=DEVICE)
 
 
 def dirac_logits(ids, peak_id, peak_value, vocab_size=VOCAB_SIZE):
     """Perfectly confident distribution (all mass on one token)."""
     logits = torch.full((1, 1, vocab_size), -1e6, dtype=torch.float32)
     logits[0, 0, peak_id] = 0.0
-    return logits
+    return logits.to(device=DEVICE)
 
 
 def gaussian_logits(ids, peak_id, peak_value, vocab_size=VOCAB_SIZE, sigma=1e-1):
@@ -45,7 +60,7 @@ def gaussian_logits(ids, peak_id, peak_value, vocab_size=VOCAB_SIZE, sigma=1e-1)
     # Assumes that ids are ordered by their numerical value
     for idx, tok_id in enumerate(ids):
         logits[0, 0, tok_id] = -1 * np.abs((idx - peak_value) ** 2 / (2 * sigma**2))
-    return logits
+    return logits.to(device=DEVICE)
 
 
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct])
@@ -93,7 +108,7 @@ def test_ntloss_variants(
 
     # build labels tensor shape (1 x T)
     label_ids = [TOKENIZER.convert_tokens_to_ids(tok) for tok in label_tokens]
-    labels = torch.tensor([label_ids], dtype=torch.long)
+    labels = torch.tensor([label_ids], dtype=torch.long, device=logits.device)
 
     # set up loss weights
     if loss_weight is None:
@@ -158,7 +173,7 @@ def test_correct_minimum(loss_class, logit_builder):
         labels = torch.tensor([[gt_token_id]], dtype=torch.long)
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx)
-            loss = loss_fn(logits, labels)
+            loss = loss_fn(logits, labels.to(device=logits.device))
 
             losses[i, peak_idx] = loss.item()
 
@@ -301,7 +316,7 @@ def test_correct_squashing(loss_class, logit_builder, squash_factor):
         labels = torch.tensor([[gt_token_id]], dtype=torch.long)
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx)
-            loss = loss_fn(logits, labels)
+            loss = loss_fn(logits, labels.to(device=logits.device))
             losses[i, peak_idx] = loss.item()
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
@@ -387,7 +402,7 @@ def test_irregular_nt_vocab(custom_vocab, loss_class, logit_builder, squash_fact
         labels = torch.tensor([[gt_token_id]], dtype=torch.long)
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx, vocab_size)
-            loss = loss_fn(logits, labels)
+            loss = loss_fn(logits, labels.to(device=logits.device))
             losses[i, peak_idx] = loss.item()
 
     assert not torch.isnan(losses).any(), "Encountered NaN in loss matrix"
@@ -415,7 +430,7 @@ def test_logit_scaling(loss_class, logit_builder):
         labels = torch.tensor([[gt_token_id]], dtype=torch.long)
         for peak_idx, peak_id in enumerate(ref_ids):
             logits = logit_builder(ref_ids, peak_id, peak_idx)
-            loss = loss_fn(logits, labels)
+            loss = loss_fn(logits, labels.to(device=logits.device))
             losses[i, peak_idx] = loss.item()
 
         # Ensure that if GT is number and mass is on text, loss is at least as
@@ -470,6 +485,7 @@ def test_number_level_ntl():
         # for non-digits, it doesn't matter; keep mass on that token to be safe
         logits_dicts_perfect.append(one_hot_pos(tid, 50.0))
     logits_perfect = make_logits(logits_dicts_perfect)
+    labels = labels.to(device=logits_perfect.device)
 
     loss_fn = NumberLevelLoss(TOKENIZER, reweigh=False)
     loss = loss_fn(logits_perfect, labels, reduction="none")
@@ -545,6 +561,7 @@ def test_number_level_ntl_scientific_notation(reweigh: bool):
         logits_dicts_perfect.append(one_hot_pos(tid, 50.0))
     logits_perfect = make_logits(logits_dicts_perfect)
     logits_perfect.requires_grad = True
+    labels = labels.to(device=logits_perfect.device)
 
     loss_fn = NumberLevelLoss(TOKENIZER, reweigh=reweigh, float_level=True)
     loss = loss_fn(logits_perfect, labels, reduction="none")

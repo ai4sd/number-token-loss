@@ -148,8 +148,8 @@ class AbstractNTLoss(ABC):
             raise TypeError("Logits have to be FloatTensor.")
         if labels is None:
             return
-        if not isinstance(labels, LongTensor):
-            raise TypeError("Labels have to be LongTensor.")
+        if not labels.dtype == torch.long:
+            raise TypeError(f"Labels have to be LongTensor, not {type(labels)}")
         if (b := labels.shape) != (a := logits.shape[:-1]):
             raise ValueError(
                 f"Logit and label sizes of first 2 dims have to match: {a} vs {b}"
@@ -186,7 +186,7 @@ class AbstractNTLoss(ABC):
             LongTensor, labels.masked_fill(labels == ignore_index, self.nan_id)
         )
         # Create a mask to filter out non-digit tokens
-        y = self.number_values[labels]
+        y = self.number_values.to(device=labels.device)[labels]
         number_token_positions = ~torch.isnan(y)
         loss_weights = (
             loss_weights[number_token_positions]
