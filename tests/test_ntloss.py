@@ -1,5 +1,6 @@
 import math
 import random
+from copy import deepcopy
 from typing import Callable
 
 import numpy as np
@@ -443,12 +444,13 @@ def test_logit_scaling(loss_class, logit_builder):
 
 def test_digit_level():
     # Ensure that 10 Number tokens are extracted if digit_level is set to True
-    loss_class = NTLoss(tokenizer=TOKENIZER, digit_level=True)
+    NEW_TOKENIZER = deepcopy(TOKENIZER)
+    loss_class = NTLoss(tokenizer=NEW_TOKENIZER, digit_level=True)
     assert len(loss_class.number_values_dense) == 10
 
     # Add some tokens that are in right range but should still be ignored
-    TOKENIZER.add_tokens([" 2"])
-    loss_class = NTLoss(tokenizer=TOKENIZER, digit_level=True)
+    NEW_TOKENIZER.add_tokens([" 2"])
+    loss_class = NTLoss(tokenizer=NEW_TOKENIZER, digit_level=True)
     assert len(loss_class.number_values_dense) == 10
 
 
