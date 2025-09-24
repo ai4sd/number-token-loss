@@ -760,9 +760,9 @@ class NumberLevelLoss(NTLossDotProduct):
         y, yhat, number_token_positions = self.convert_digits_to_numbers(
             y, yhat, number_token_positions, labels
         )
-        loss_weights = (loss_weights or torch.ones_like(labels, dtype=logits.dtype))[
-            number_token_positions
-        ]
+        if loss_weights is None:
+            loss_weights = torch.ones_like(labels, dtype=logits.dtype)
+        loss_weights = loss_weights[number_token_positions]
 
         # NOTE: Alternative could be to apply specified loss function to normalized yhat
         # loss = self.loss_function(torch.div(
