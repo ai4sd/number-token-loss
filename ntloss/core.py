@@ -722,20 +722,17 @@ class NumberLevelLoss(NTLossDotProduct):
         """
         self._validate_inputs(logits, labels, loss_weights)
 
-        y, loss_weights = self._prepare_number_token_targets(
-            labels, loss_weights, ignore_index
-        )
-        loss_weights = loss_weights.to(logits.dtype)
+        y, _ = self._prepare_number_token_targets(labels, loss_weights, ignore_index)
         number_token_positions = cast(BoolTensor, ~torch.isnan(y))
 
         # If no digit tokens in batch, or total of the relevant loss weights is zero, no need for upcoming calculations
-        if not number_token_positions.any() or not loss_weights.any():
+        if not number_token_positions.any() or (
+            loss_weights is not None and not loss_weights.any()
+        ):
             if (reduction == "mean") | (reduction == "sum"):
                 loss = torch.tensor(0, dtype=logits.dtype, device=labels.device)
             elif reduction == "none":
-                loss = torch.zeros_like(
-                    labels, dtype=logits.dtype, device=labels.device
-                )
+                loss = torch.zeros_like(labels, dtype=logits.dtype)
             else:
                 raise ValueError(f"{reduction} is not a valid value for reduction")
 
@@ -746,6 +743,9 @@ class NumberLevelLoss(NTLossDotProduct):
         y, yhat, number_token_positions = self.convert_digits_to_numbers(
             y, yhat, number_token_positions
         )
+        loss_weights = (loss_weights or torch.ones_like(labels, dtype=logits.dtype))[
+            number_token_positions
+        ]
 
         # Normalize yhat using y so relative error can be computed using loss function
         yhat = cast(

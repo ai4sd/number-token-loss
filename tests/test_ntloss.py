@@ -1,13 +1,15 @@
 import math
 import random
+from typing import Callable
 
 import numpy as np
 import pytest
 import torch
+import torch.nn.functional as F
 from tokenizers import Tokenizer, models
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
-from ntloss import NTLoss, NTLossDotProduct
+from ntloss import NTLoss, NTLossDotProduct, NumberLevelLoss
 from ntloss.utils import is_number
 
 TOKENIZER = AutoTokenizer.from_pretrained("t5-small")
@@ -448,3 +450,77 @@ def test_digit_level():
     TOKENIZER.add_tokens([" 2"])
     loss_class = NTLoss(tokenizer=TOKENIZER, digit_level=True)
     assert len(loss_class.number_values_dense) == 10
+
+
+@pytest.mark.parametrize("loss_function", [F.mse_loss, F.l1_loss])
+def test_number_level_ntl(loss_function: Callable):
+    seq_tokens = ["A", "1", "2", "3", "B", "4", "5"]
+    label_ids = TOKENIZER.convert_tokens_to_ids(seq_tokens)
+    assert all(x is not None and x >= 0 for x in label_ids), "Missing token id"
+    labels = torch.tensor([label_ids], dtype=torch.long)
+
+    def one_hot_pos(tok_id, logit=50.0):
+        return {tok_id: logit}
+
+    # Perfect prediction: put all mass on the correct digit at each digit position.
+    logits_dicts_perfect = []
+    for tok in seq_tokens:
+        tid = TOKENIZER.convert_tokens_to_ids(tok)
+        # for non-digits, it doesn't matter; keep mass on that token to be safe
+        logits_dicts_perfect.append(one_hot_pos(tid, 50.0))
+    logits_perfect = make_logits(logits_dicts_perfect)
+
+    loss_fn = NumberLevelLoss(TOKENIZER, reweigh=False, loss_function=loss_function)
+    loss = loss_fn(logits_perfect, labels, reduction="none")
+    assert loss.shape == labels.shape
+    assert loss.sum().item() == 0
+
+    # Sanity: perfect case should be exactly zero for mean/sum as well
+    loss = loss_fn(logits_perfect, labels, reduction="mean")
+    assert loss.sum().item() == 0
+    loss = loss_fn(logits_perfect, labels, reduction="sum")
+    assert loss.sum().item() == 0
+
+    # Now make a single digit wrong: change the middle digit "2" -> predict "9" instead.
+    wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
+    wrong_logits_dicts[2] = {TOKENIZER.convert_tokens_to_ids("9"): 50.0}
+    logits_middle_wrong = make_logits(wrong_logits_dicts)
+
+    loss_middle = loss_fn(logits_middle_wrong, labels, reduction="none").squeeze()
+    # Check that loss for that item is nonzero
+    assert loss_middle[1].item() > 0
+    # All others should have zero loss
+    assert loss_middle[0].item() == 0 and loss_middle[2:].sum() == 0
+
+    # Now make the first digit wrong and check whether error is higher
+    wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
+    wrong_logits_dicts[1] = {TOKENIZER.convert_tokens_to_ids("2"): 50.0}
+    logits_first_wrong = make_logits(wrong_logits_dicts)
+
+    loss_first = loss_fn(logits_first_wrong, labels, reduction="none").squeeze()
+    assert loss_first[1].item() > 0
+    assert loss_first[0].item() == 0 and loss_first[2:].sum() == 0
+    assert loss_first[1].item() > loss_middle[1].item()
+
+    # Now make the third digit wrong and check whether error is lower
+    wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
+    wrong_logits_dicts[3] = {TOKENIZER.convert_tokens_to_ids("5"): 50.0}
+    logits_last_wrong = make_logits(wrong_logits_dicts)
+
+    loss_last = loss_fn(logits_last_wrong, labels, reduction="none").squeeze()
+    assert loss_last[1].item() > 0
+    assert loss_last[0].item() == 0 and loss_last[2:].sum() == 0
+    assert loss_last[1].item() < loss_middle[1].item()
+
+    # If we aggregate, this must still hold
+    for reduction in ["mean", "sum"]:
+        loss_middle = loss_fn(
+            logits_middle_wrong, labels, reduction=reduction
+        ).squeeze()
+        loss_last = loss_fn(logits_last_wrong, labels, reduction=reduction).squeeze()
+        loss_first = loss_fn(logits_first_wrong, labels, reduction=reduction).squeeze()
+
+        assert loss_middle.item() > 0.0
+        assert loss_last.item() > 0.0
+        assert loss_first.item() > 0.0
+        assert loss_first.item() > loss_middle.item() > loss_last.item()
