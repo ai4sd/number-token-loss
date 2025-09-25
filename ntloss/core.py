@@ -783,24 +783,12 @@ class NumberLevelLoss(NTLossDotProduct):
                 logits=logits, loss=loss, number_token_positions=number_token_positions
             )
 
-        if reduction == "mean":
-            # Mean pooling (weighted by loss mask)
-            loss = torch.dot(
-                loss.flatten(), loss_weights.flatten()
-            ) / loss_weights.sum().clamp_min(torch.finfo(loss.dtype).eps)
-        elif reduction == "sum":
-            loss = torch.dot(loss.flatten(), loss_weights.flatten())
-        elif reduction == "none":
-            # Cast loss for number tokens back to Tensor of size BS x T
-            loss_ = torch.zeros(number_token_positions.numel()).to(loss.device)
-            loss_[number_token_positions.view(-1)] = loss * loss_weights
-            bs, seq_len, _ = logits.size()
-            loss = loss_.view(bs, seq_len)
+        loss = self._apply_reduction(
+            loss=loss,
+            reduction=reduction,
+            loss_weights=loss_weights,
+            number_token_positions=number_token_positions,
+            logits=logits,
+        )
 
-            assert torch.sum(loss[~number_token_positions]) == 0, (
-                "NumberTokenLoss computed for non-digit tokens!"
-            )
-
-        else:
-            raise ValueError(f"{reduction} is not a valid value for reduction")
         return loss
