@@ -3710,19 +3710,7 @@ BS x T if reduction=="none"</p>
 <span class="normal"><a href="#__codelineno-0-791">791</a></span>
 <span class="normal"><a href="#__codelineno-0-792">792</a></span>
 <span class="normal"><a href="#__codelineno-0-793">793</a></span>
-<span class="normal"><a href="#__codelineno-0-794">794</a></span>
-<span class="normal"><a href="#__codelineno-0-795">795</a></span>
-<span class="normal"><a href="#__codelineno-0-796">796</a></span>
-<span class="normal"><a href="#__codelineno-0-797">797</a></span>
-<span class="normal"><a href="#__codelineno-0-798">798</a></span>
-<span class="normal"><a href="#__codelineno-0-799">799</a></span>
-<span class="normal"><a href="#__codelineno-0-800">800</a></span>
-<span class="normal"><a href="#__codelineno-0-801">801</a></span>
-<span class="normal"><a href="#__codelineno-0-802">802</a></span>
-<span class="normal"><a href="#__codelineno-0-803">803</a></span>
-<span class="normal"><a href="#__codelineno-0-804">804</a></span>
-<span class="normal"><a href="#__codelineno-0-805">805</a></span>
-<span class="normal"><a href="#__codelineno-0-806">806</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-590" name="__codelineno-0-590"></a><span class="k">class</span><span class="w"> </span><span class="nc">NumberLevelLoss</span><span class="p">(</span><span class="n">NTLossDotProduct</span><span class="p">):</span>
+<span class="normal"><a href="#__codelineno-0-794">794</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-590" name="__codelineno-0-590"></a><span class="k">class</span><span class="w"> </span><span class="nc">NumberLevelLoss</span><span class="p">(</span><span class="n">NTLossDotProduct</span><span class="p">):</span>
 <a id="__codelineno-0-591" name="__codelineno-0-591"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Class to calculate NTL on a per-number (rather than per-token) basis.&quot;&quot;&quot;</span>
 <a id="__codelineno-0-592" name="__codelineno-0-592"></a>
 <a id="__codelineno-0-593" name="__codelineno-0-593"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
@@ -3918,27 +3906,15 @@ BS x T if reduction=="none"</p>
 <a id="__codelineno-0-783" name="__codelineno-0-783"></a>                <span class="n">logits</span><span class="o">=</span><span class="n">logits</span><span class="p">,</span> <span class="n">loss</span><span class="o">=</span><span class="n">loss</span><span class="p">,</span> <span class="n">number_token_positions</span><span class="o">=</span><span class="n">number_token_positions</span>
 <a id="__codelineno-0-784" name="__codelineno-0-784"></a>            <span class="p">)</span>
 <a id="__codelineno-0-785" name="__codelineno-0-785"></a>
-<a id="__codelineno-0-786" name="__codelineno-0-786"></a>        <span class="k">if</span> <span class="n">reduction</span> <span class="o">==</span> <span class="s2">&quot;mean&quot;</span><span class="p">:</span>
-<a id="__codelineno-0-787" name="__codelineno-0-787"></a>            <span class="c1"># Mean pooling (weighted by loss mask)</span>
-<a id="__codelineno-0-788" name="__codelineno-0-788"></a>            <span class="n">loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span>
-<a id="__codelineno-0-789" name="__codelineno-0-789"></a>                <span class="n">loss</span><span class="o">.</span><span class="n">flatten</span><span class="p">(),</span> <span class="n">loss_weights</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span>
-<a id="__codelineno-0-790" name="__codelineno-0-790"></a>            <span class="p">)</span> <span class="o">/</span> <span class="n">loss_weights</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">finfo</span><span class="p">(</span><span class="n">loss</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">eps</span><span class="p">)</span>
-<a id="__codelineno-0-791" name="__codelineno-0-791"></a>        <span class="k">elif</span> <span class="n">reduction</span> <span class="o">==</span> <span class="s2">&quot;sum&quot;</span><span class="p">:</span>
-<a id="__codelineno-0-792" name="__codelineno-0-792"></a>            <span class="n">loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">loss</span><span class="o">.</span><span class="n">flatten</span><span class="p">(),</span> <span class="n">loss_weights</span><span class="o">.</span><span class="n">flatten</span><span class="p">())</span>
-<a id="__codelineno-0-793" name="__codelineno-0-793"></a>        <span class="k">elif</span> <span class="n">reduction</span> <span class="o">==</span> <span class="s2">&quot;none&quot;</span><span class="p">:</span>
-<a id="__codelineno-0-794" name="__codelineno-0-794"></a>            <span class="c1"># Cast loss for number tokens back to Tensor of size BS x T</span>
-<a id="__codelineno-0-795" name="__codelineno-0-795"></a>            <span class="n">loss_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">number_token_positions</span><span class="o">.</span><span class="n">numel</span><span class="p">())</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">loss</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
-<a id="__codelineno-0-796" name="__codelineno-0-796"></a>            <span class="n">loss_</span><span class="p">[</span><span class="n">number_token_positions</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)]</span> <span class="o">=</span> <span class="n">loss</span> <span class="o">*</span> <span class="n">loss_weights</span>
-<a id="__codelineno-0-797" name="__codelineno-0-797"></a>            <span class="n">bs</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">size</span><span class="p">()</span>
-<a id="__codelineno-0-798" name="__codelineno-0-798"></a>            <span class="n">loss</span> <span class="o">=</span> <span class="n">loss_</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">bs</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">)</span>
-<a id="__codelineno-0-799" name="__codelineno-0-799"></a>
-<a id="__codelineno-0-800" name="__codelineno-0-800"></a>            <span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">loss</span><span class="p">[</span><span class="o">~</span><span class="n">number_token_positions</span><span class="p">])</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="p">(</span>
-<a id="__codelineno-0-801" name="__codelineno-0-801"></a>                <span class="s2">&quot;NumberTokenLoss computed for non-digit tokens!&quot;</span>
-<a id="__codelineno-0-802" name="__codelineno-0-802"></a>            <span class="p">)</span>
-<a id="__codelineno-0-803" name="__codelineno-0-803"></a>
-<a id="__codelineno-0-804" name="__codelineno-0-804"></a>        <span class="k">else</span><span class="p">:</span>
-<a id="__codelineno-0-805" name="__codelineno-0-805"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">reduction</span><span class="si">}</span><span class="s2"> is not a valid value for reduction&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-806" name="__codelineno-0-806"></a>        <span class="k">return</span> <span class="n">loss</span>
+<a id="__codelineno-0-786" name="__codelineno-0-786"></a>        <span class="n">loss</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_apply_reduction</span><span class="p">(</span>
+<a id="__codelineno-0-787" name="__codelineno-0-787"></a>            <span class="n">loss</span><span class="o">=</span><span class="n">loss</span><span class="p">,</span>
+<a id="__codelineno-0-788" name="__codelineno-0-788"></a>            <span class="n">reduction</span><span class="o">=</span><span class="n">reduction</span><span class="p">,</span>
+<a id="__codelineno-0-789" name="__codelineno-0-789"></a>            <span class="n">loss_weights</span><span class="o">=</span><span class="n">loss_weights</span><span class="p">,</span>
+<a id="__codelineno-0-790" name="__codelineno-0-790"></a>            <span class="n">number_token_positions</span><span class="o">=</span><span class="n">number_token_positions</span><span class="p">,</span>
+<a id="__codelineno-0-791" name="__codelineno-0-791"></a>            <span class="n">logits</span><span class="o">=</span><span class="n">logits</span><span class="p">,</span>
+<a id="__codelineno-0-792" name="__codelineno-0-792"></a>        <span class="p">)</span>
+<a id="__codelineno-0-793" name="__codelineno-0-793"></a>
+<a id="__codelineno-0-794" name="__codelineno-0-794"></a>        <span class="k">return</span> <span class="n">loss</span>
 </code></pre></div></td></tr></table></div>
               </details>
 
@@ -4665,19 +4641,7 @@ BS x T if reduction=="none"</p>
 <span class="normal"><a href="#__codelineno-0-791">791</a></span>
 <span class="normal"><a href="#__codelineno-0-792">792</a></span>
 <span class="normal"><a href="#__codelineno-0-793">793</a></span>
-<span class="normal"><a href="#__codelineno-0-794">794</a></span>
-<span class="normal"><a href="#__codelineno-0-795">795</a></span>
-<span class="normal"><a href="#__codelineno-0-796">796</a></span>
-<span class="normal"><a href="#__codelineno-0-797">797</a></span>
-<span class="normal"><a href="#__codelineno-0-798">798</a></span>
-<span class="normal"><a href="#__codelineno-0-799">799</a></span>
-<span class="normal"><a href="#__codelineno-0-800">800</a></span>
-<span class="normal"><a href="#__codelineno-0-801">801</a></span>
-<span class="normal"><a href="#__codelineno-0-802">802</a></span>
-<span class="normal"><a href="#__codelineno-0-803">803</a></span>
-<span class="normal"><a href="#__codelineno-0-804">804</a></span>
-<span class="normal"><a href="#__codelineno-0-805">805</a></span>
-<span class="normal"><a href="#__codelineno-0-806">806</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-716" name="__codelineno-0-716"></a><span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-794">794</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-716" name="__codelineno-0-716"></a><span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span>
 <a id="__codelineno-0-717" name="__codelineno-0-717"></a>    <span class="bp">self</span><span class="p">,</span>
 <a id="__codelineno-0-718" name="__codelineno-0-718"></a>    <span class="n">logits</span><span class="p">:</span> <span class="n">FloatTensor</span><span class="p">,</span>
 <a id="__codelineno-0-719" name="__codelineno-0-719"></a>    <span class="n">labels</span><span class="p">:</span> <span class="n">LongTensor</span><span class="p">,</span>
@@ -4747,27 +4711,15 @@ BS x T if reduction=="none"</p>
 <a id="__codelineno-0-783" name="__codelineno-0-783"></a>            <span class="n">logits</span><span class="o">=</span><span class="n">logits</span><span class="p">,</span> <span class="n">loss</span><span class="o">=</span><span class="n">loss</span><span class="p">,</span> <span class="n">number_token_positions</span><span class="o">=</span><span class="n">number_token_positions</span>
 <a id="__codelineno-0-784" name="__codelineno-0-784"></a>        <span class="p">)</span>
 <a id="__codelineno-0-785" name="__codelineno-0-785"></a>
-<a id="__codelineno-0-786" name="__codelineno-0-786"></a>    <span class="k">if</span> <span class="n">reduction</span> <span class="o">==</span> <span class="s2">&quot;mean&quot;</span><span class="p">:</span>
-<a id="__codelineno-0-787" name="__codelineno-0-787"></a>        <span class="c1"># Mean pooling (weighted by loss mask)</span>
-<a id="__codelineno-0-788" name="__codelineno-0-788"></a>        <span class="n">loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span>
-<a id="__codelineno-0-789" name="__codelineno-0-789"></a>            <span class="n">loss</span><span class="o">.</span><span class="n">flatten</span><span class="p">(),</span> <span class="n">loss_weights</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span>
-<a id="__codelineno-0-790" name="__codelineno-0-790"></a>        <span class="p">)</span> <span class="o">/</span> <span class="n">loss_weights</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">finfo</span><span class="p">(</span><span class="n">loss</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">eps</span><span class="p">)</span>
-<a id="__codelineno-0-791" name="__codelineno-0-791"></a>    <span class="k">elif</span> <span class="n">reduction</span> <span class="o">==</span> <span class="s2">&quot;sum&quot;</span><span class="p">:</span>
-<a id="__codelineno-0-792" name="__codelineno-0-792"></a>        <span class="n">loss</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">loss</span><span class="o">.</span><span class="n">flatten</span><span class="p">(),</span> <span class="n">loss_weights</span><span class="o">.</span><span class="n">flatten</span><span class="p">())</span>
-<a id="__codelineno-0-793" name="__codelineno-0-793"></a>    <span class="k">elif</span> <span class="n">reduction</span> <span class="o">==</span> <span class="s2">&quot;none&quot;</span><span class="p">:</span>
-<a id="__codelineno-0-794" name="__codelineno-0-794"></a>        <span class="c1"># Cast loss for number tokens back to Tensor of size BS x T</span>
-<a id="__codelineno-0-795" name="__codelineno-0-795"></a>        <span class="n">loss_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">number_token_positions</span><span class="o">.</span><span class="n">numel</span><span class="p">())</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">loss</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
-<a id="__codelineno-0-796" name="__codelineno-0-796"></a>        <span class="n">loss_</span><span class="p">[</span><span class="n">number_token_positions</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)]</span> <span class="o">=</span> <span class="n">loss</span> <span class="o">*</span> <span class="n">loss_weights</span>
-<a id="__codelineno-0-797" name="__codelineno-0-797"></a>        <span class="n">bs</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">size</span><span class="p">()</span>
-<a id="__codelineno-0-798" name="__codelineno-0-798"></a>        <span class="n">loss</span> <span class="o">=</span> <span class="n">loss_</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">bs</span><span class="p">,</span> <span class="n">seq_len</span><span class="p">)</span>
-<a id="__codelineno-0-799" name="__codelineno-0-799"></a>
-<a id="__codelineno-0-800" name="__codelineno-0-800"></a>        <span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">loss</span><span class="p">[</span><span class="o">~</span><span class="n">number_token_positions</span><span class="p">])</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="p">(</span>
-<a id="__codelineno-0-801" name="__codelineno-0-801"></a>            <span class="s2">&quot;NumberTokenLoss computed for non-digit tokens!&quot;</span>
-<a id="__codelineno-0-802" name="__codelineno-0-802"></a>        <span class="p">)</span>
-<a id="__codelineno-0-803" name="__codelineno-0-803"></a>
-<a id="__codelineno-0-804" name="__codelineno-0-804"></a>    <span class="k">else</span><span class="p">:</span>
-<a id="__codelineno-0-805" name="__codelineno-0-805"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">reduction</span><span class="si">}</span><span class="s2"> is not a valid value for reduction&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-806" name="__codelineno-0-806"></a>    <span class="k">return</span> <span class="n">loss</span>
+<a id="__codelineno-0-786" name="__codelineno-0-786"></a>    <span class="n">loss</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_apply_reduction</span><span class="p">(</span>
+<a id="__codelineno-0-787" name="__codelineno-0-787"></a>        <span class="n">loss</span><span class="o">=</span><span class="n">loss</span><span class="p">,</span>
+<a id="__codelineno-0-788" name="__codelineno-0-788"></a>        <span class="n">reduction</span><span class="o">=</span><span class="n">reduction</span><span class="p">,</span>
+<a id="__codelineno-0-789" name="__codelineno-0-789"></a>        <span class="n">loss_weights</span><span class="o">=</span><span class="n">loss_weights</span><span class="p">,</span>
+<a id="__codelineno-0-790" name="__codelineno-0-790"></a>        <span class="n">number_token_positions</span><span class="o">=</span><span class="n">number_token_positions</span><span class="p">,</span>
+<a id="__codelineno-0-791" name="__codelineno-0-791"></a>        <span class="n">logits</span><span class="o">=</span><span class="n">logits</span><span class="p">,</span>
+<a id="__codelineno-0-792" name="__codelineno-0-792"></a>    <span class="p">)</span>
+<a id="__codelineno-0-793" name="__codelineno-0-793"></a>
+<a id="__codelineno-0-794" name="__codelineno-0-794"></a>    <span class="k">return</span> <span class="n">loss</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
