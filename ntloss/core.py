@@ -15,6 +15,7 @@ class AbstractNTLoss(ABC):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        vocab_size: Optional[int] = None,
         digit_level: bool = True,
         reweigh: bool = True,
     ):
@@ -23,6 +24,8 @@ class AbstractNTLoss(ABC):
 
         Args:
             tokenizer: Standard HF tokenizer.
+            vocab_size: Optional user-provided vocab size. If not provided, the
+                tokenizer's vocab size is used.
             digit_level: Whether to ensure only digits are considered number tokens,
                 stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
@@ -34,6 +37,9 @@ class AbstractNTLoss(ABC):
         """
         super().__init__()
         self.tokenizer = tokenizer
+        self.user_vocab_size = vocab_size
+        self.effective_vocab_size = vocab_size if vocab_size is not None else len(self.tokenizer)
+        self._vocab_size_validated = False
         self.digit_level = digit_level
         self.reweigh = reweigh
 
@@ -255,6 +261,7 @@ class NTLossDotProduct(AbstractNTLoss):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        vocab_size: Optional[int] = None,
         digit_level: bool = True,
         reweigh: bool = True,
         loss_function: Callable = F.mse_loss,
@@ -264,6 +271,8 @@ class NTLossDotProduct(AbstractNTLoss):
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
+            vocab_size: Optional user-provided vocab size. If not provided, the
+                tokenizer's vocab size is used.
             digit_level: Whether to ensure only digits are considered number tokens,
                 stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
@@ -277,6 +286,7 @@ class NTLossDotProduct(AbstractNTLoss):
         """
         super().__init__(
             tokenizer=tokenizer,
+            vocab_size=vocab_size,
             digit_level=digit_level,
             reweigh=reweigh,
         )
@@ -427,6 +437,7 @@ class NTLoss(AbstractNTLoss):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        vocab_size: Optional[int] = None,
         digit_level: bool = True,
         reweigh: bool = True,
         squash_factor: Optional[float] = None,
@@ -436,6 +447,8 @@ class NTLoss(AbstractNTLoss):
 
         Args:
             tokenizer: Any HuggingFace tokenizer.
+            vocab_size: Optional user-provided vocab size. If not provided, the
+                tokenizer's vocab size is used.
             digit_level: Whether to ensure only digits are considered number tokens,
                 stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
@@ -452,6 +465,7 @@ class NTLoss(AbstractNTLoss):
         """
         super().__init__(
             tokenizer=tokenizer,
+            vocab_size=vocab_size,
             digit_level=digit_level,
             reweigh=reweigh,
         )
@@ -593,6 +607,7 @@ class NumberLevelLoss(NTLossDotProduct):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        vocab_size: Optional[int] = None,
         float_level: bool = False,
         reweigh: bool = True,
     ):
@@ -601,6 +616,8 @@ class NumberLevelLoss(NTLossDotProduct):
 
         Args:
             tokenizer: Any HuggingFace tokenizer.
+            vocab_size: Optional user-provided vocab size. If not provided, the
+                tokenizer's vocab size is used.
             float_level: Whether to calculate the loss for every float or every
                 integer in the sequence. For `12.34`, if float_level=False, two
                 loss terms will be calculated, respectively for `12` and `34`.
@@ -617,6 +634,7 @@ class NumberLevelLoss(NTLossDotProduct):
         # digit_level must be set to True.
         super().__init__(
             tokenizer=tokenizer,
+            vocab_size=vocab_size,
             digit_level=True,
             reweigh=reweigh,
             loss_function=F.l1_loss,  # unused
