@@ -139,8 +139,8 @@ class AbstractNTLoss(ABC):
 
         return loss
 
-    @staticmethod
     def _validate_inputs(
+        self,
         logits: FloatTensor,
         labels: Optional[LongTensor],
         loss_weights: Optional[Tensor],
@@ -172,6 +172,25 @@ class AbstractNTLoss(ABC):
                 )
             if torch.any(loss_weights < 0):
                 raise ValueError("loss_mask must be ≥ 0.")
+
+        if not self._vocab_size_validated:
+            logits_vocab_size = logits.shape[-1]
+
+            if logits_vocab_size != self.effective_vocab_size:
+                if self.user_vocab_size is None:
+                    raise ValueError(
+                        f"Vocabulary size mismatch! Model's logit dimension ({logits_vocab_size}) "
+                        f"does not match tokenizer's size ({len(self.tokenizer)}). "
+                        f"Please re-initialize NTLoss with vocab_size={logits_vocab_size} "
+                        f"or with `vocab_size=model.get_input_embeddings().weight.shape[0]`"
+                    )
+                else:
+                    raise ValueError(
+                        f"The provided `vocab_size` ({self.user_vocab_size}) does not match the model's vocab size"
+                        f"logit dimension ({logits_vocab_size}). Please check the value."
+                    )
+
+            self._vocab_size_validated = True
 
     def _prepare_number_token_targets(
         self, labels: LongTensor, loss_weights: Optional[Tensor], ignore_index: int
