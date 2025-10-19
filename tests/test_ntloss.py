@@ -627,3 +627,40 @@ def test_number_level_ntl_scientific_notation(reweigh: bool):
         assert loss_last.item() > 0.0
         assert loss_first.item() > 0.0
         assert loss_first.item() > loss_middle.item() > loss_last.item()
+
+@pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct, NumberLevelLoss])
+def test_vocab_size_handling(loss_class):
+    """Tests the new vocab_size handling logic"""
+    larger_vocab_size = VOCAB_SIZE + 100
+    labels = torch.tensor([[TOKENIZER.convert_tokens_to_ids("3")]], device=DEVICE)
+
+    # Case 1: Mismatch, vocab_size not provided
+    logits_large = torch.randn(1, 1, larger_vocab_size, device=DEVICE)
+    loss_fn_no_size = loss_class(tokenizer=TOKENIZER)
+
+    with pytest.raises(ValueError, match="Vocabulary size mismatch!"):
+        loss_fn_no_size(logits_large, labels)
+
+    # Case 2: Mismatch, incorrect vocab_size provided
+    wrong_vocab_size = larger_vocab_size + 50
+    loss_fn_wrong_size = loss_class(tokenizer=TOKENIZER, vocab_size=wrong_vocab_size)
+
+    with pytest.raises(ValueError, match="The provided `vocab_size`"):
+        loss_fn_wrong_size(logits_large, labels)
+
+    # Case 3: Success, correct vocab_size provided
+    loss_fn_correct_size = loss_class(tokenizer=TOKENIZER, vocab_size=larger_vocab_size)
+    try:
+        loss = loss_fn_correct_size(logits_large, labels)
+        assert torch.is_tensor(loss)
+        assert not torch.isnan(loss)
+    except Exception as e:
+        pytest.fail(f"Loss calculation failed unexpectedly with correct vocab_size: {e}")
+
+    # Case 4: Sanity check, matching sizes (original behavior)
+    logits_normal = torch.randn(1, 1, VOCAB_SIZE, device=DEVICE)
+    try:
+        loss = loss_fn_no_size(logits_normal, labels)
+        assert torch.is_tensor(loss)
+    except Exception as e:
+        pytest.fail(f"Loss calculation failed with matching vocab sizes: {e}")
