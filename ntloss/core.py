@@ -57,7 +57,9 @@ class AbstractNTLoss(ABC):
         if vocab_size < len(self.tokenizer) and new_tokens > 0:
             logger.warning(f"Added {new_tokens} new tokens for number token loss")
         vocab = self.tokenizer.get_vocab()
-        self.number_values: FloatTensor = torch.full((len(vocab),), float("nan"))
+
+        final_vocab_size = max(self.effective_vocab_size, len(vocab))
+        self.number_values: FloatTensor = torch.full((final_vocab_size,), float("nan"))
 
         # Try to convert each token to a float after stripping the space prefix
         for token, id in vocab.items():
@@ -510,7 +512,8 @@ class NTLoss(AbstractNTLoss):
         num_ids = torch.nonzero(self.is_number_token, as_tuple=True)[0]
         # Create mapping from number token ids to their index in order of appearance in vocab:
         # e.g. token "3" -> id 519 -> dist_idx 1, then abs dist to 3 for other NT values will be found in row/column 1
-        vocab_to_dist_idx = torch.full((len(self.tokenizer),), -1, dtype=torch.long)
+        final_vocab_size = self.number_values.shape[0]
+        vocab_to_dist_idx = torch.full((final_vocab_size,), -1, dtype=torch.long)
         # Use arange to ensure order of appearance
         vocab_to_dist_idx[num_ids] = torch.arange(num_ids.size(0), dtype=torch.long)
 
