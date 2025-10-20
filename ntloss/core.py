@@ -56,9 +56,7 @@ class AbstractNTLoss(ABC):
         if vocab_size < len(self.tokenizer) and new_tokens > 0:
             logger.warning(f"Added {new_tokens} new tokens for number token loss")
         vocab = self.tokenizer.get_vocab()
-
-        final_vocab_size = max(self.effective_vocab_size, len(vocab))
-        self.number_values: FloatTensor = torch.full((final_vocab_size,), float("nan"))
+        self.number_values: FloatTensor = torch.full((self.vocab_size,), float("nan"))
 
         # Try to convert each token to a float after stripping the space prefix
         for token, id in vocab.items():
