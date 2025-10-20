@@ -37,7 +37,7 @@ class AbstractNTLoss(ABC):
         """
         super().__init__()
         self.tokenizer = tokenizer
-        self.effective_vocab_size = vocab_size if vocab_size is not None else len(self.tokenizer)
+        self.vocab_size = vocab_size if vocab_size is not None else len(self.tokenizer)
         self._vocab_size_validated = False
         self.digit_level = digit_level
         self.reweigh = reweigh
