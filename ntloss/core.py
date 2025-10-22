@@ -15,6 +15,7 @@ class AbstractNTLoss(ABC):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        vocab_size: Optional[int] = None,
         digit_level: bool = True,
         reweigh: bool = True,
     ):
@@ -23,6 +24,8 @@ class AbstractNTLoss(ABC):
 
         Args:
             tokenizer: Standard HF tokenizer.
+            vocab_size: Optional user-provided vocab size. If not provided, the
+                tokenizer's vocab size is used.
             digit_level: Whether to ensure only digits are considered number tokens,
                 stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
@@ -34,6 +37,8 @@ class AbstractNTLoss(ABC):
         """
         super().__init__()
         self.tokenizer = tokenizer
+        self.vocab_size = vocab_size if vocab_size is not None else len(self.tokenizer)
+        self._vocab_size_validated = False
         self.digit_level = digit_level
         self.reweigh = reweigh
 
@@ -51,7 +56,7 @@ class AbstractNTLoss(ABC):
         if vocab_size < len(self.tokenizer) and new_tokens > 0:
             logger.warning(f"Added {new_tokens} new tokens for number token loss")
         vocab = self.tokenizer.get_vocab()
-        self.number_values: FloatTensor = torch.full((len(vocab),), float("nan"))
+        self.number_values: FloatTensor = torch.full((self.vocab_size,), float("nan"))
 
         # Try to convert each token to a float after stripping the space prefix
         for token, id in vocab.items():
@@ -133,8 +138,8 @@ class AbstractNTLoss(ABC):
 
         return loss
 
-    @staticmethod
     def _validate_inputs(
+        self,
         logits: FloatTensor,
         labels: Optional[LongTensor],
         loss_weights: Optional[Tensor],
@@ -166,6 +171,15 @@ class AbstractNTLoss(ABC):
                 )
             if torch.any(loss_weights < 0):
                 raise ValueError("loss_mask must be ≥ 0.")
+
+        if not self._vocab_size_validated:
+            logits_vocab_size = logits.shape[-1]
+            if logits_vocab_size != self.vocab_size:
+                raise ValueError(
+                        f"The current `vocab_size` ({self.vocab_size}) does not match the model's vocab size"
+                        f"logit dimension ({logits_vocab_size}). Please check the value."
+                    )
+            self._vocab_size_validated = True
 
     def _prepare_number_token_targets(
         self, labels: LongTensor, loss_weights: Optional[Tensor], ignore_index: int
@@ -255,6 +269,7 @@ class NTLossDotProduct(AbstractNTLoss):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        vocab_size: Optional[int] = None,
         digit_level: bool = True,
         reweigh: bool = True,
         loss_function: Callable = F.mse_loss,
@@ -264,6 +279,8 @@ class NTLossDotProduct(AbstractNTLoss):
 
         Args:
             tokenizer: NTLTokenizer with necessary attributes like is_number_token etc.
+            vocab_size: Optional user-provided vocab size. If not provided, the
+                tokenizer's vocab size is used.
             digit_level: Whether to ensure only digits are considered number tokens,
                 stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
@@ -277,6 +294,7 @@ class NTLossDotProduct(AbstractNTLoss):
         """
         super().__init__(
             tokenizer=tokenizer,
+            vocab_size=vocab_size,
             digit_level=digit_level,
             reweigh=reweigh,
         )
@@ -427,6 +445,7 @@ class NTLoss(AbstractNTLoss):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        vocab_size: Optional[int] = None,
         digit_level: bool = True,
         reweigh: bool = True,
         squash_factor: Optional[float] = None,
@@ -436,6 +455,8 @@ class NTLoss(AbstractNTLoss):
 
         Args:
             tokenizer: Any HuggingFace tokenizer.
+            vocab_size: Optional user-provided vocab size. If not provided, the
+                tokenizer's vocab size is used.
             digit_level: Whether to ensure only digits are considered number tokens,
                 stabilizing training with NTL. Defaults to True. Used for most
                 experiments in the ICML paper.
@@ -452,6 +473,7 @@ class NTLoss(AbstractNTLoss):
         """
         super().__init__(
             tokenizer=tokenizer,
+            vocab_size=vocab_size,
             digit_level=digit_level,
             reweigh=reweigh,
         )
@@ -477,7 +499,8 @@ class NTLoss(AbstractNTLoss):
         num_ids = torch.nonzero(self.is_number_token, as_tuple=True)[0]
         # Create mapping from number token ids to their index in order of appearance in vocab:
         # e.g. token "3" -> id 519 -> dist_idx 1, then abs dist to 3 for other NT values will be found in row/column 1
-        vocab_to_dist_idx = torch.full((len(self.tokenizer),), -1, dtype=torch.long)
+        final_vocab_size = self.number_values.shape[0]
+        vocab_to_dist_idx = torch.full((final_vocab_size,), -1, dtype=torch.long)
         # Use arange to ensure order of appearance
         vocab_to_dist_idx[num_ids] = torch.arange(num_ids.size(0), dtype=torch.long)
 
@@ -593,6 +616,7 @@ class NumberLevelLoss(NTLossDotProduct):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
+        vocab_size: Optional[int] = None,
         float_level: bool = False,
         reweigh: bool = True,
     ):
@@ -601,6 +625,8 @@ class NumberLevelLoss(NTLossDotProduct):
 
         Args:
             tokenizer: Any HuggingFace tokenizer.
+            vocab_size: Optional user-provided vocab size. If not provided, the
+                tokenizer's vocab size is used.
             float_level: Whether to calculate the loss for every float or every
                 integer in the sequence. For `12.34`, if float_level=False, two
                 loss terms will be calculated, respectively for `12` and `34`.
@@ -617,6 +643,7 @@ class NumberLevelLoss(NTLossDotProduct):
         # digit_level must be set to True.
         super().__init__(
             tokenizer=tokenizer,
+            vocab_size=vocab_size,
             digit_level=True,
             reweigh=reweigh,
             loss_function=F.l1_loss,  # unused
