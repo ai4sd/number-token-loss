@@ -499,8 +499,7 @@ class NTLoss(AbstractNTLoss):
         num_ids = torch.nonzero(self.is_number_token, as_tuple=True)[0]
         # Create mapping from number token ids to their index in order of appearance in vocab:
         # e.g. token "3" -> id 519 -> dist_idx 1, then abs dist to 3 for other NT values will be found in row/column 1
-        final_vocab_size = self.number_values.shape[0]
-        vocab_to_dist_idx = torch.full((final_vocab_size,), -1, dtype=torch.long)
+        vocab_to_dist_idx = torch.full((self.vocab_size,), -1, dtype=torch.long)
         # Use arange to ensure order of appearance
         vocab_to_dist_idx[num_ids] = torch.arange(num_ids.size(0), dtype=torch.long)
 
