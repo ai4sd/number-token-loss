@@ -145,9 +145,9 @@ class AbstractNTLoss(ABC):
         loss_weights: Optional[Tensor],
     ):
         """Private method to perform size and type checks."""
-        if (td := len(logits.shape)) != 3 or (ne := logits.numel()) == 0:
+        if (td := len(logits.shape)) != 3 or logits.numel() == 0:
             raise ValueError(
-                f"Logits have to be non-empty 3D Tensor, not {td}D with {ne} elements"
+                f"Logits have to be non-empty 3D Tensor, not {td}D with {logits.numel()} elements"
             )
         if not torch.is_floating_point(logits):
             raise TypeError("Logits have to be FloatTensor.")
@@ -160,9 +160,9 @@ class AbstractNTLoss(ABC):
                 f"Logit and label sizes of first 2 dims have to match: {a} vs {b}"
             )
 
-        if (td := len(labels.shape)) != 2 or (ne := labels.numel()) == 0:
+        if (td := len(labels.shape)) != 2 or labels.numel() == 0:
             raise ValueError(
-                f"Labels have to be non-empty 2D Tensor, not {td}D with {ne} elements"
+                f"Labels have to be non-empty 2D Tensor, not {td}D with {labels.numel()} elements"
             )
         if loss_weights is not None:
             if loss_weights.shape != labels.shape:
