@@ -180,7 +180,7 @@ def test_loss_calculation_speed(seq_length, num_token_fraction):
         results[device] = device_results
 
         # Print relative comparison for this device
-        print(f"\n  Relative performance (vs NTLoss):")
+        print("\n  Relative performance (vs NTLoss):")
         ntloss_time = device_results["NTLoss"]
         for loss_name, loss_time in device_results.items():
             if loss_name != "NTLoss":
