@@ -82,6 +82,10 @@ class AbstractNTLoss(ABC):
             logger.error(
                 f"You requested digit-level but {num_nts} number tokens were identified: {self.number_values_dense}"
             )
+        self.number_token_ids = torch.nonzero(
+            self.is_number_token, as_tuple=False
+        ).squeeze(1)
+        self._nt_ids_cache: dict[torch.device, torch.Tensor] = {}
 
     @abstractmethod
     def forward(
@@ -106,7 +110,8 @@ class AbstractNTLoss(ABC):
         Scale the NT loss element-wise using the logit weight on number tokens.
         NOTE: This reweighing ensures that if ground truth is a number token
             but most probability mass is on text tokens, the loss will be *higher*
-            than the worst possible number token. This is an edge case in practice.
+            than the worst possible number token. Mostly to accelerate early training.
+        NOTE: Since NT mass is only calculated at loss positions, the overhead is tiny.
 
         Args:
             logits: 3D Tensor of shape BS x T x V.
@@ -118,24 +123,25 @@ class AbstractNTLoss(ABC):
             A 1D Tensor over all number tokens in batch with the scaled NT losses.
         """
 
-        # Take softmax over logits of all tokens in vocab and compute NT logit weight
-        softmax_probs_all = F.softmax(logits, dim=-1)
-        nt_logit_weight = torch.sum(
-            softmax_probs_all[:, :, self.is_number_token], dim=-1
-        )[number_token_positions]
+        nt_logits = logits[number_token_positions]
+        nt_ids = self._nt_ids_cache.get(nt_logits.device)
+        if nt_ids is None:
+            nt_ids = self.number_token_ids.to(nt_logits.device)
+            self._nt_ids_cache[nt_logits.device] = nt_ids
 
-        # Apply weights for NTL element-wise
-        loss *= nt_logit_weight
+        # Softmax and mass only for relevant positions
+        nt_probs = torch.softmax(nt_logits, dim=-1)  # (K, V)
+        nt_mass = nt_probs.index_select(dim=-1, index=nt_ids).sum(dim=-1)
 
-        # Apply regularization
+        # Apply regularization (in place is faster)
+        loss.mul_(nt_mass)
         # NOTE: We could consider reweighing here with the max for that label token
         # rather than the global max
-        loss += (
+        loss.add_(
             1.01
             * self.max_dist.to(dtype=loss.dtype, device=loss.device)
-            * (1 - nt_logit_weight)
+            * (1 - nt_mass)
         )
-
         return loss
 
     def _validate_inputs(
@@ -176,9 +182,9 @@ class AbstractNTLoss(ABC):
             logits_vocab_size = logits.shape[-1]
             if logits_vocab_size != self.vocab_size:
                 raise ValueError(
-                        f"The current `vocab_size` ({self.vocab_size}) does not match the model's vocab size"
-                        f"logit dimension ({logits_vocab_size}). Please check the value."
-                    )
+                    f"The current `vocab_size` ({self.vocab_size}) does not match the model's vocab size"
+                    f"logit dimension ({logits_vocab_size}). Please check the value."
+                )
             self._vocab_size_validated = True
 
     def _prepare_number_token_targets(
@@ -610,7 +616,7 @@ class NTLoss(AbstractNTLoss):
 
 
 class NumberLevelLoss(NTLossDotProduct):
-    """Class to calculate NTL on a per-number (rather than per-token) basis."""
+    """Calculate NTL on a per-number (rather than per-token) basis."""
 
     def __init__(
         self,
@@ -618,6 +624,7 @@ class NumberLevelLoss(NTLossDotProduct):
         vocab_size: Optional[int] = None,
         float_level: bool = False,
         reweigh: bool = True,
+        max_number_length: int = 20,
     ):
         """
         NTL constructor for the number-level NTLoss.
@@ -637,6 +644,8 @@ class NumberLevelLoss(NTLossDotProduct):
                 incorrect loss if most mass is placed outside of the number tokens.
                 Using this will explode the NL-NTL in the current implementation,
                 so reweighing for the NL-NTL needs to be refined.
+            max_number_length: Maximum expected length of a number in tokens.
+                Used for precomputing power masks. Defaults to 20.
 
         """
         # digit_level must be set to True.
@@ -649,6 +658,12 @@ class NumberLevelLoss(NTLossDotProduct):
         )
         self.float_level = float_level
         self.dot = self.tokenizer.convert_tokens_to_ids(".")
+
+        # Precompute powers of 10 for efficiency
+        self.max_number_length = max_number_length
+        self.powers_of_10 = torch.pow(
+            10.0, torch.arange(max_number_length, dtype=torch.float32)
+        )
 
     def setup_max_dist(self):
         """
@@ -664,80 +679,165 @@ class NumberLevelLoss(NTLossDotProduct):
         labels: LongTensor,
     ):
         """
-        Set up the order mask for the batch and convert digit-level number tokens to numerical values.
+        Vectorized conversion of digit-level number tokens to number-level values.
+
+        Output convention:
+        - Only the *first digit* of each detected number span contains the full number.
+        - All other digits (and in float_level=True also the dot token) inside the span
+            are set to NaN and removed from number_token_positions.
+        - float_level=False: '.' breaks number spans (12.34 -> "12" and "34")
+        - float_level=True : a single '.' between digits is part of the span but contributes 0
+                            (12.34 -> "1234" as integer-like concatenation)
 
         Args:
-            y: 2D FloatTensor of shape BS x T with target numerical values at digit-level (NaN for non-number tokens).
-            yhat: 2D FloatTensor of shape BS x T containing the predictions for the number tokens at digit-level
-                (includes predictions for non-number tokens).
-            number_token_positions: 2D BoolTensor (BS x T) containing locations of number tokens at digit-level.
-            labels: 2D LongTensor of shape BS x T with the target input IDs.
+            y: (B, T) float, GT digit values at digit positions, NaN elsewhere
+            yhat: (B, T) float, predicted digit values at all positions
+            number_token_positions: (B, T) bool, True at digit positions
+            labels: (B, T) long, token ids
 
         Returns:
-            y: 2D FloatTensor of shape BS x T with target numerical values at number-level (NaN for non-number tokens).
-            yhat: 2D FloatTensor of shape BS x T containing the predictions for the number tokens at number-level
-                (includes predictions for non-number tokens).
-            number_token_positions: 2D BoolTensor (BS x T) containing locations of numerical values in y and yhat.
+            (y_new, yhat_new, number_token_positions_new) at number-level
         """
+        B, T = y.shape
+        device = y.device
+        out_dtype = yhat.dtype
 
-        # Set up empty order_mask: will store power with which to scale digits
-        order_mask = torch.zeros_like(y, dtype=yhat.dtype, device=y.device)
+        is_digit = number_token_positions  # (B, T)
+        if not is_digit.any():
+            return y, yhat, number_token_positions
 
-        # Extract numbers using number blocks
-        for i in range(y.shape[0]):
-            # For every item in batch: assume not starting with number block
-            in_number_block = False
-            end_digit = -1
+        # -------------------------------------------------------------------------
+        # 1) Decide which tokens are considered "inside a number span"
+        # -------------------------------------------------------------------------
+        # Base: digits are always in spans
+        in_number = is_digit
 
-            # Loop from end of sequence to beginning to extract numbers
-            for j in range(y.shape[1] - 1, -1, -1):
-                # Already in number block and a digit: increase order magnitude
-                if in_number_block and number_token_positions[i, j]:
-                    if not self.float_level or labels[i, j + 1] != self.dot:
-                        previous_order_index = j + 1
-                    else:
-                        previous_order_index = j + 2
-                    order_mask[i, j] = order_mask[i, previous_order_index] + 1
+        if self.float_level:
+            is_dot = labels.eq(self.dot)  # (B, T)
 
-                # Not in number block: first instance of number = end digit
-                elif number_token_positions[i, j]:
-                    in_number_block = True
-                    end_digit = j + 1
+            # dot is part of a number span only if it is *between* digits: d . d
+            digit_prev = torch.zeros((B, T), dtype=torch.bool, device=device)
+            digit_prev[:, 1:] = is_digit[:, :-1]
 
-                # A dot can be considered part of a number if self.float_level
-                elif (
-                    in_number_block
-                    and self.float_level
-                    and labels[i, j] == self.dot
-                    and labels[i, j + 1] != self.dot
-                ):
-                    # exp(-inf) = 0, thus, the dot does not contribute to the GT number calculation
-                    order_mask[i, j] = -torch.inf
-                    # Necessary to avoid having NaN when summing
-                    y[i, j] = 0
-                    yhat[i, j] = 0
+            digit_next = torch.zeros((B, T), dtype=torch.bool, device=device)
+            digit_next[:, :-1] = is_digit[:, 1:]
 
-                # In number block, but not a digit: end of number_block
-                elif in_number_block:
-                    in_number_block = False
+            dot_between_digits = is_dot & digit_prev & digit_next
 
-                    # Reuse y and yhat tensors to store full numbers
-                    y[i, j + 1] = torch.sum(
-                        y[i, j + 1 : end_digit]
-                        * torch.pow(10, order_mask[i, j + 1 : end_digit])
-                    )
-                    # Make sure non-relevant numerical values are turned into NaN
-                    # This indicates non-number tokens
-                    y[i, j + 2 : end_digit] = y[i, j]
-                    yhat[i, j + 1] = torch.sum(
-                        yhat[i, j + 1 : end_digit]
-                        * torch.pow(10, order_mask[i, j + 1 : end_digit])
-                    )
+            # In float mode, those dots count as "in number" (but contribute 0 later)
+            in_number = in_number | dot_between_digits
+        else:
+            dot_between_digits = torch.zeros((B, T), dtype=torch.bool, device=device)
 
-        # Update mask with locations of number tokens
-        number_token_positions = cast(BoolTensor, ~torch.isnan(y))
+        # -------------------------------------------------------------------------
+        # 2) Build a "continuation" mask: does position t continue a span from t-1?
+        # -------------------------------------------------------------------------
+        # If previous token is a digit => continuation for digits (and for dot-between-digits in float mode)
+        digit_prev = torch.zeros((B, T), dtype=torch.bool, device=device)
+        digit_prev[:, 1:] = is_digit[:, :-1]
 
-        return y, yhat, number_token_positions
+        if self.float_level:
+            is_dot = labels.eq(self.dot)
+
+            dot_prev = torch.zeros((B, T), dtype=torch.bool, device=device)
+            dot_prev[:, 1:] = is_dot[:, :-1]
+
+            digit_prev2 = torch.zeros((B, T), dtype=torch.bool, device=device)
+            if T > 2:
+                digit_prev2[:, 2:] = is_digit[:, :-2]
+
+            # Continue if:
+            #  - previous is digit, OR
+            #  - previous is dot and the token before that is digit (digit . digit)
+            continues_span = digit_prev | (dot_prev & digit_prev2)
+        else:
+            continues_span = digit_prev
+
+        # A span starts wherever we're "in_number" but not continuing a previous span
+        span_start = in_number & ~continues_span
+
+        # -------------------------------------------------------------------------
+        # 3) Assign each in-number token a segment id (per batch element)
+        # -------------------------------------------------------------------------
+        # seg_id is 0 for non-number tokens, otherwise 1..K within each row
+        seg_id = torch.cumsum(span_start.to(torch.int32), dim=1)
+        seg_id = seg_id * in_number.to(torch.int32)  # zero out non-number tokens
+
+        # How many segments max per row? Needed for a stable "global segment id"
+        segs_per_row = seg_id.max(dim=1).values  # (B,)
+        max_segs = int(segs_per_row.max().item())
+        if max_segs == 0:
+            return y, yhat, number_token_positions
+
+        # Make segment ids unique across batch:
+        # global_seg = b * (max_segs + 1) + seg_id
+        stride = max_segs + 1
+        batch_base = (torch.arange(B, device=device, dtype=torch.int64) * stride).view(
+            B, 1
+        )
+        global_seg = batch_base + seg_id.to(torch.int64)  # (B, T), 0 means "no segment"
+
+        # -------------------------------------------------------------------------
+        # 4) Compute per-digit position-from-right within each segment
+        # -------------------------------------------------------------------------
+        # We only count digits (dots do not affect digit positions).
+        # pos_from_right: rightmost digit has 1, next has 2, etc.
+        digit_count_rev = torch.cumsum(
+            torch.flip(is_digit.to(torch.int32), dims=[1]), dim=1
+        )
+        pos_from_right = torch.flip(
+            digit_count_rev, dims=[1]
+        )  # (B, T), 0 for non-digits
+
+        # Exponent for base-10 weighting: rightmost digit exponent 0, next exponent 1, ...
+        exponent = (pos_from_right - 1).clamp_min(0).to(torch.int64)
+
+        # Keep exponents within our precomputed range (or assert if you prefer strict behavior)
+        exponent = exponent.clamp_max(self.max_number_length - 1)
+
+        pow10 = self.powers_of_10.to(device=device, dtype=out_dtype)  # (L,)
+        scale = pow10[exponent]  # (B, T)
+
+        # -------------------------------------------------------------------------
+        # 5) Compute digit contributions and sum per segment via scatter_add
+        # -------------------------------------------------------------------------
+        # Only digits contribute; dots/non-number contribute 0.
+        zeros = torch.zeros((), device=device, dtype=out_dtype)
+
+        y_contrib = torch.where(is_digit, y.to(out_dtype) * scale, zeros)
+        yhat_contrib = torch.where(is_digit, yhat * scale, zeros)
+
+        total_segments = B * stride  # includes index 0 per row
+        seg_sum_y = torch.zeros((total_segments,), device=device, dtype=out_dtype)
+        seg_sum_yhat = torch.zeros((total_segments,), device=device, dtype=out_dtype)
+
+        flat_seg = global_seg.view(-1)
+        seg_sum_y.scatter_add_(0, flat_seg, y_contrib.view(-1))
+        seg_sum_yhat.scatter_add_(0, flat_seg, yhat_contrib.view(-1))
+
+        # -------------------------------------------------------------------------
+        # 6) Write segment sums back only at the *first digit* position of each span
+        # -------------------------------------------------------------------------
+        # Important: if float_level=True, span_start could be a dot (but we want first *digit*).
+        number_start = span_start & is_digit  # (B, T)
+
+        y_new = y.clone()
+        yhat_new = yhat.clone()
+
+        # Everything inside a span but not the start digit becomes NaN (incl. dots, other digits)
+        in_span_not_start = in_number & ~number_start
+        y_new = y_new.masked_fill(in_span_not_start, float("nan"))
+        yhat_new = yhat_new.masked_fill(in_span_not_start, float("nan"))
+
+        # Fill starts with summed values
+        start_seg = global_seg[number_start]  # (N,)
+        y_new[number_start] = seg_sum_y[start_seg]
+        yhat_new[number_start] = seg_sum_yhat[start_seg]
+
+        # Mask now indicates number-level positions (one per number span)
+        number_token_positions_new = number_start
+
+        return y_new, yhat_new, number_token_positions_new
 
     def forward(
         self,
