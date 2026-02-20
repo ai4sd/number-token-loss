@@ -657,7 +657,9 @@ class NumberLevelLoss(NTLossDotProduct):
             loss_function=F.l1_loss,  # unused
         )
         self.float_level = float_level
-        self.dot = self.tokenizer.convert_tokens_to_ids(".")
+        dot_result = self.tokenizer.convert_tokens_to_ids(".")
+        # Ensure we get an int, not a list
+        self.dot: int = dot_result if isinstance(dot_result, int) else dot_result[0]
 
         # Precompute powers of 10 for efficiency
         self.max_number_length = max_number_length
@@ -710,7 +712,7 @@ class NumberLevelLoss(NTLossDotProduct):
         # 1) Decide which tokens are considered "inside a number span"
         # -------------------------------------------------------------------------
         # Base: digits are always in spans
-        in_number = is_digit
+        in_number: BoolTensor = is_digit
 
         if self.float_level:
             is_dot = labels.eq(self.dot)  # (B, T)
@@ -725,7 +727,7 @@ class NumberLevelLoss(NTLossDotProduct):
             dot_between_digits = is_dot & digit_prev & digit_next
 
             # In float mode, those dots count as "in number" (but contribute 0 later)
-            in_number = in_number | dot_between_digits
+            in_number = cast(BoolTensor, in_number | dot_between_digits)
         else:
             dot_between_digits = torch.zeros((B, T), dtype=torch.bool, device=device)
 
