@@ -152,7 +152,7 @@ def test_equivalence_reductions(device, reduction):
     torch.testing.assert_close(loss, loss_looped, rtol=1e-5, atol=1e-6)
 
 @pytest.mark.parametrize("device", DEVICES)
-@pytest.mark.parametrize("seq_tokens", [["A", "1", "2", "B", "3", "4"], ["A", "1", "2", ".", "3", "4"]])
+@pytest.mark.parametrize("seq_tokens", [["A", "1", "2", "B", "3", "4"], ["A", "1", "2", ".", "3", "4"], ["A", "1", "2", ".", "3", "4", 'B', '5', '6'] ])
 @pytest.mark.parametrize("float_level", [False, True])
 @pytest.mark.parametrize("reweigh", [False, True])
 def test_number_level_ntl_multiple_numbers_in_sequence(device, seq_tokens, float_level, reweigh):
@@ -177,18 +177,34 @@ def test_number_level_ntl_multiple_numbers_in_sequence(device, seq_tokens, float
         y.clone(), yhat.clone(), number_token_positions.clone(), labels.clone()
     )
 
-    if not float_level or '.' not in seq_tokens:
+    if (not float_level and '5' not in seq_tokens) or (float_level and seq_tokens == ["A", "1", "2", "B", "3", "4"]):
         # We expect y_out to have 12.0 at index 1 and 34.0 at index 4, NaNs elsewhere
         expected_y = torch.tensor(
             [[float("nan"), 12.0, float("nan"), float("nan"), 34.0, float("nan")]],
             device=device,
         )
-    else:
+    elif not float_level and '.' in seq_tokens:
+        expected_y = torch.tensor(
+            [[float("nan"), 12.0, float("nan"), float("nan"), 34.0, float("nan"), float("nan"), 56.0, float('nan')]],
+            device=device,
+        )
+    elif not float_level and '5' in seq_tokens:
+        expected_y = torch.tensor(
+            [[float("nan"), 12.0, float("nan"), float("nan"), 34.0, float("nan"), float("nan"), 56.0, float('nan')]],
+            device=device,
+        )
+    elif float_level and seq_tokens == ["A", "1", "2", ".", "3", "4"]:
         expected_y = torch.tensor(
             [[float("nan"), 1234.0, float("nan"), float("nan"), float("nan"),  float("nan")]],
             device=device,
         )
-
+    elif float_level and '5' in seq_tokens:
+        expected_y = torch.tensor(
+            [[float("nan"), 1234.0, float("nan"), float("nan"), float("nan"),  float("nan"), float("nan"), 56.0, float('nan')]],
+            device=device,
+        )
+    else:
+        raise ValueError('Your logic is wrong, impossible case')
 
     assert torch.allclose(
         y_out[~torch.isnan(y_out)], expected_y[~torch.isnan(expected_y)]

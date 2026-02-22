@@ -628,6 +628,7 @@ def test_number_level_ntl_scientific_notation(reweigh: bool):
         assert loss_first.item() > 0.0
         assert loss_first.item() > loss_middle.item() > loss_last.item()
 
+
 @pytest.mark.parametrize("loss_class", [NTLoss, NTLossDotProduct, NumberLevelLoss])
 def test_vocab_size_handling(loss_class):
     """Tests the vocab_size handling logic"""
@@ -655,7 +656,9 @@ def test_vocab_size_handling(loss_class):
         assert torch.is_tensor(loss)
         assert not torch.isnan(loss)
     except Exception as e:
-        pytest.fail(f"Loss calculation failed unexpectedly with correct vocab_size: {e}")
+        pytest.fail(
+            f"Loss calculation failed unexpectedly with correct vocab_size: {e}"
+        )
 
     # Case 4: Sanity check, matching sizes (original behavior)
     logits_normal = torch.randn(1, 1, VOCAB_SIZE, device=DEVICE)
