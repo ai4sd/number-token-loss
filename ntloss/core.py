@@ -245,6 +245,7 @@ class AbstractNTLoss(ABC):
                 - 0D tensor if `reduction` is "mean" or "sum".
                 - 2D Tensor of shape BS x T if `reduction` is "none".
         """
+        loss_weights = loss_weights.to(device=loss.device, dtype=loss.dtype)
         if reduction == "mean":
             # Mean pooling (weighted by loss mask)
             loss = torch.dot(
@@ -702,8 +703,6 @@ class NumberLevelLoss(NTLossDotProduct):
         """
         B, T = y.shape
         device = y.device
-        out_dtype = yhat.dtype
-
         is_digit = number_token_positions  # (B, T)
         if not is_digit.any():
             return y, yhat, number_token_positions
@@ -816,20 +815,26 @@ class NumberLevelLoss(NTLossDotProduct):
         # Keep exponents within our precomputed range (or assert if you prefer strict behavior)
         exponent = exponent.clamp_max(self.max_number_length - 1)
 
-        pow10 = self.powers_of_10.to(device=device, dtype=out_dtype)  # (L,)
-        scale = pow10[exponent]  # (B, T)
+        pow10_y = self.powers_of_10.to(device=device, dtype=y.dtype)  # (L,)
+        scale_y = pow10_y[exponent]  # (B, T)
+        if yhat.dtype == y.dtype:
+            scale_yhat = scale_y
+        else:
+            scale_yhat = self.powers_of_10.to(device=device, dtype=yhat.dtype)[
+                exponent
+            ]
 
         # -------------------------------------------------------------------------
         # 5) Compute digit contributions and sum per segment via scatter_add
         # -------------------------------------------------------------------------
         # Only digits contribute; dots/non-number contribute 0.
-        zeros = torch.zeros((), device=device, dtype=out_dtype)
+        y_contrib = torch.where(is_digit, y * scale_y, torch.zeros((), device=device, dtype=y.dtype))
+        yhat_contrib = torch.where(
+            is_digit, yhat * scale_yhat, torch.zeros((), device=device, dtype=yhat.dtype)
+        )
 
-        y_contrib = torch.where(is_digit, y.to(out_dtype) * scale, zeros)
-        yhat_contrib = torch.where(is_digit, yhat * scale, zeros)
-
-        seg_sum_y = torch.zeros((total_segments,), device=device, dtype=out_dtype)
-        seg_sum_yhat = torch.zeros((total_segments,), device=device, dtype=out_dtype)
+        seg_sum_y = torch.zeros((total_segments,), device=device, dtype=y.dtype)
+        seg_sum_yhat = torch.zeros((total_segments,), device=device, dtype=yhat.dtype)
         seg_sum_y.scatter_add_(0, flat_seg, y_contrib.view(-1))
         seg_sum_yhat.scatter_add_(0, flat_seg, yhat_contrib.view(-1))
 

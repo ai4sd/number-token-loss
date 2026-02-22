@@ -32,6 +32,17 @@ def get_device(use_cpu: bool = False) -> str:
 DEVICE = get_device()
 
 
+def supports_bfloat16(device: str) -> bool:
+    if device == "cpu":
+        return True
+    if device == "cuda":
+        return torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    if device == "mps":
+        # MPS bf16 support is not consistently available across PyTorch/macOS versions.
+        return False
+    return False
+
+
 def make_logits(token_logit_value_dicts):
     """
     Build a (1 x T x V) tensor filled with -inf,
@@ -469,7 +480,11 @@ def test_digit_level():
     assert len(loss_class.number_values_dense) == 10
 
 
-def test_number_level_ntl():
+@pytest.mark.parametrize("logits_dtype", [torch.float32, torch.bfloat16])
+def test_number_level_ntl(logits_dtype):
+    if logits_dtype == torch.bfloat16 and not supports_bfloat16(DEVICE):
+        pytest.skip(f"bfloat16 not supported on {DEVICE}")
+
     seq_tokens = ["A", "1", "2", "3", "B", "4", "5"]
     label_ids = TOKENIZER.convert_tokens_to_ids(seq_tokens)
     assert all(x is not None and x >= 0 for x in label_ids), "Missing token id"
@@ -484,7 +499,7 @@ def test_number_level_ntl():
         tid = TOKENIZER.convert_tokens_to_ids(tok)
         # for non-digits, it doesn't matter; keep mass on that token to be safe
         logits_dicts_perfect.append(one_hot_pos(tid, 50.0))
-    logits_perfect = make_logits(logits_dicts_perfect)
+    logits_perfect = make_logits(logits_dicts_perfect).to(dtype=logits_dtype)
     labels = labels.to(device=logits_perfect.device)
 
     loss_fn = NumberLevelLoss(TOKENIZER, reweigh=False)
@@ -501,7 +516,7 @@ def test_number_level_ntl():
     # Now make a single digit wrong: change the middle digit "2" -> predict "9" instead.
     wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
     wrong_logits_dicts[2] = {TOKENIZER.convert_tokens_to_ids("9"): 50.0}
-    logits_middle_wrong = make_logits(wrong_logits_dicts)
+    logits_middle_wrong = make_logits(wrong_logits_dicts).to(dtype=logits_dtype)
 
     loss_middle = loss_fn(logits_middle_wrong, labels, reduction="none").squeeze()
     # Check that loss for that item is nonzero
@@ -512,7 +527,7 @@ def test_number_level_ntl():
     # Now make the first digit wrong and check whether error is higher
     wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
     wrong_logits_dicts[1] = {TOKENIZER.convert_tokens_to_ids("9"): 50.0}
-    logits_first_wrong = make_logits(wrong_logits_dicts)
+    logits_first_wrong = make_logits(wrong_logits_dicts).to(dtype=logits_dtype)
 
     loss_first = loss_fn(logits_first_wrong, labels, reduction="none").squeeze()
     assert loss_first[1].item() > 0
@@ -522,7 +537,7 @@ def test_number_level_ntl():
     # Now make the third digit wrong and check whether error is lower
     wrong_logits_dicts = [d.copy() for d in logits_dicts_perfect]
     wrong_logits_dicts[3] = {TOKENIZER.convert_tokens_to_ids("5"): 50.0}
-    logits_last_wrong = make_logits(wrong_logits_dicts)
+    logits_last_wrong = make_logits(wrong_logits_dicts).to(dtype=logits_dtype)
 
     loss_last = loss_fn(logits_last_wrong, labels, reduction="none").squeeze()
     assert loss_last[1].item() > 0
