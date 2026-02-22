@@ -151,8 +151,53 @@ def test_equivalence_reductions(device, reduction):
 
     torch.testing.assert_close(loss, loss_looped, rtol=1e-5, atol=1e-6)
 
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("seq_tokens", [["A", "1", "2", "B", "3", "4"], ["A", "1", "2", ".", "3", "4"]])
+@pytest.mark.parametrize("float_level", [False, True])
+@pytest.mark.parametrize("reweigh", [False, True])
+def test_number_level_ntl_multiple_numbers_in_sequence(device, seq_tokens, float_level, reweigh):
+    """
+    Tests that multiple distinct numbers in the same sequence are calculated without 
+    their digits contaminating each other.
+    """
+    loss_fn = NumberLevelLoss(TOKENIZER, reweigh=reweigh, float_level=float_level)
+
+    # Sequence is [NaN, 1, 2, NaN, 3, 4]
+
+    label_ids = TOKENIZER.convert_tokens_to_ids(seq_tokens)
+    labels = torch.tensor([label_ids], dtype=torch.long, device=device)
+
+    # the loss function prepare the initial digit-level targets
+    y, _ = loss_fn._prepare_number_token_targets(labels, None, ignore_index=-100)
+    number_token_positions = ~torch.isnan(y)
+
+    yhat = y.clone()  # Dummy yhat
+
+    y_out, yhat_out, pos_out = loss_fn.convert_digits_to_numbers(
+        y.clone(), yhat.clone(), number_token_positions.clone(), labels.clone()
+    )
+
+    if not float_level or '.' not in seq_tokens:
+        # We expect y_out to have 12.0 at index 1 and 34.0 at index 4, NaNs elsewhere
+        expected_y = torch.tensor(
+            [[float("nan"), 12.0, float("nan"), float("nan"), 34.0, float("nan")]],
+            device=device,
+        )
+    else:
+        expected_y = torch.tensor(
+            [[float("nan"), 1234.0, float("nan"), float("nan"), float("nan"),  float("nan")]],
+            device=device,
+        )
+
+
+    assert torch.allclose(
+        y_out[~torch.isnan(y_out)], expected_y[~torch.isnan(expected_y)]
+    ), f"Expected {expected_y}, got {y_out}"
+    assert torch.all(torch.isnan(y_out) == torch.isnan(expected_y)), (
+    )
+
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
-# Made with Bob

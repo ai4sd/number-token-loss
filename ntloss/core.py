@@ -779,20 +779,39 @@ class NumberLevelLoss(NTLossDotProduct):
         )
         global_seg = batch_base + seg_id.to(torch.int64)  # (B, T), 0 means "no segment"
 
-        # -------------------------------------------------------------------------
-        # 4) Compute per-digit position-from-right within each segment
-        # -------------------------------------------------------------------------
-        # We only count digits (dots do not affect digit positions).
-        # pos_from_right: rightmost digit has 1, next has 2, etc.
-        digit_count_rev = torch.cumsum(
-            torch.flip(is_digit.to(torch.int32), dims=[1]), dim=1
-        )
-        pos_from_right = torch.flip(
-            digit_count_rev, dims=[1]
-        )  # (B, T), 0 for non-digits
+        # First digit of each number span (used both for segment-local digit indexing
+        # and for writing the final number-level values back).
+        number_start = span_start & is_digit  # (B, T)
 
-        # Exponent for base-10 weighting: rightmost digit exponent 0, next exponent 1, ...
-        exponent = (pos_from_right - 1).clamp_min(0).to(torch.int64)
+        # -------------------------------------------------------------------------
+        # 4) Compute per-digit exponent within each segment (not across the row)
+        # -------------------------------------------------------------------------
+        # Row-wide digit cumsum (1-based on digit positions).
+        digit_cumsum = torch.cumsum(is_digit.to(torch.int32), dim=1)
+
+        # Reuse segment ids as scatter/gather indices to stay fully vectorized.
+        total_segments = B * stride  # includes one "non-segment" bin per row
+        flat_seg = global_seg.view(-1)
+
+        # Total number of digits in each segment (dots excluded).
+        seg_digit_count = torch.zeros((total_segments,), device=device, dtype=torch.int32)
+        seg_digit_count.scatter_add_(0, flat_seg, is_digit.to(torch.int32).view(-1))
+
+        # Row digit count before the first digit of each segment.
+        seg_digit_offset = torch.zeros(
+            (total_segments,), device=device, dtype=torch.int32
+        )
+        seg_digit_offset.scatter_(
+            0,
+            global_seg[number_start],
+            (digit_cumsum[number_start] - 1).to(torch.int32),
+        )
+
+        # Segment-local 1-based digit index, then convert to base-10 exponent.
+        digit_idx_in_seg = digit_cumsum - seg_digit_offset[global_seg]
+        exponent = (seg_digit_count[global_seg] - digit_idx_in_seg).clamp_min(0).to(
+            torch.int64
+        )
 
         # Keep exponents within our precomputed range (or assert if you prefer strict behavior)
         exponent = exponent.clamp_max(self.max_number_length - 1)
@@ -809,11 +828,8 @@ class NumberLevelLoss(NTLossDotProduct):
         y_contrib = torch.where(is_digit, y.to(out_dtype) * scale, zeros)
         yhat_contrib = torch.where(is_digit, yhat * scale, zeros)
 
-        total_segments = B * stride  # includes index 0 per row
         seg_sum_y = torch.zeros((total_segments,), device=device, dtype=out_dtype)
         seg_sum_yhat = torch.zeros((total_segments,), device=device, dtype=out_dtype)
-
-        flat_seg = global_seg.view(-1)
         seg_sum_y.scatter_add_(0, flat_seg, y_contrib.view(-1))
         seg_sum_yhat.scatter_add_(0, flat_seg, yhat_contrib.view(-1))
 
@@ -821,7 +837,6 @@ class NumberLevelLoss(NTLossDotProduct):
         # 6) Write segment sums back only at the *first digit* position of each span
         # -------------------------------------------------------------------------
         # Important: if float_level=True, span_start could be a dot (but we want first *digit*).
-        number_start = span_start & is_digit  # (B, T)
 
         y_new = y.clone()
         yhat_new = yhat.clone()
