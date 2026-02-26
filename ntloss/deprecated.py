@@ -137,6 +137,17 @@ class NumberLevelLossLooped(NTLossDotProduct):
                         * torch.pow(10, order_mask[i, j + 1 : end_digit])
                     )
 
+            if in_number_block:
+                # catches the case where the sequence starts with a number
+                y[i, 0] = torch.sum(
+                    y[i, 0:end_digit] * torch.pow(10, order_mask[i, 0:end_digit])
+                )
+                # ensure the subsequent digits are set to NaN (just like the inner loop does)
+                y[i, 1:end_digit] = float("nan")
+                yhat[i, 0] = torch.sum(
+                    yhat[i, 0:end_digit] * torch.pow(10, order_mask[i, 0:end_digit])
+                )
+
         # Update mask with locations of number tokens
         number_token_positions = cast(BoolTensor, ~torch.isnan(y))
 
