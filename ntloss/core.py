@@ -211,7 +211,7 @@ class AbstractNTLoss(ABC):
         loss_weights = (
             loss_weights[number_token_positions]
             if loss_weights is not None
-            else torch.ones_like(labels, device=labels.device)[number_token_positions]
+            else torch.ones(int(number_token_positions.sum()),device=labels.device)
         )
         return cast(FloatTensor, y), loss_weights
 
@@ -909,8 +909,13 @@ class NumberLevelLoss(NTLossDotProduct):
             y, yhat, number_token_positions, labels
         )
         if loss_weights is None:
-            loss_weights = torch.ones_like(labels, dtype=logits.dtype)
-        loss_weights = loss_weights[number_token_positions]
+            loss_weights = torch.ones(
+                int(number_token_positions.sum()),
+                device=labels.device,
+                dtype=logits.dtype,
+            )
+        else:
+            loss_weights = loss_weights[number_token_positions]
 
         # NOTE: Alternative could be to apply specified loss function to normalized yhat
         # loss = self.loss_function(torch.div(
