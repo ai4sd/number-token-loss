@@ -255,7 +255,7 @@ class AbstractNTLoss(ABC):
             loss = torch.dot(loss.flatten(), loss_weights.flatten())
         elif reduction == "none":
             # Cast loss for number tokens back to Tensor of size BS x T
-            loss_ = torch.zeros(number_token_positions.numel()).to(loss.device)
+            loss_ = torch.zeros(number_token_positions.numel(), device=loss.device, dtype=loss.dtype)
             loss_[number_token_positions.view(-1)] = loss * loss_weights
             bs, seq_len, _ = logits.size()
             loss = loss_.view(bs, seq_len)
