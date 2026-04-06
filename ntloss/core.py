@@ -707,6 +707,10 @@ class NumberLevelLoss(NTLossDotProduct):
         if not is_digit.any():
             return y, yhat, number_token_positions
 
+        # If previous token is a digit => continuation for digits (and for dot-between-digits in float mode)
+        digit_prev = torch.zeros((B, T), dtype=torch.bool, device=device)
+        digit_prev[:, 1:] = is_digit[:, :-1]
+
         # -------------------------------------------------------------------------
         # 1) Decide which tokens are considered "inside a number span"
         # -------------------------------------------------------------------------
@@ -717,9 +721,6 @@ class NumberLevelLoss(NTLossDotProduct):
             is_dot = labels.eq(self.dot)  # (B, T)
 
             # dot is part of a number span only if it is *between* digits: d . d
-            digit_prev = torch.zeros((B, T), dtype=torch.bool, device=device)
-            digit_prev[:, 1:] = is_digit[:, :-1]
-
             digit_next = torch.zeros((B, T), dtype=torch.bool, device=device)
             digit_next[:, :-1] = is_digit[:, 1:]
 
@@ -733,13 +734,7 @@ class NumberLevelLoss(NTLossDotProduct):
         # -------------------------------------------------------------------------
         # 2) Build a "continuation" mask: does position t continue a span from t-1?
         # -------------------------------------------------------------------------
-        # If previous token is a digit => continuation for digits (and for dot-between-digits in float mode)
-        digit_prev = torch.zeros((B, T), dtype=torch.bool, device=device)
-        digit_prev[:, 1:] = is_digit[:, :-1]
-
         if self.float_level:
-            is_dot = labels.eq(self.dot)
-
             dot_prev = torch.zeros((B, T), dtype=torch.bool, device=device)
             dot_prev[:, 1:] = is_dot[:, :-1]
 
