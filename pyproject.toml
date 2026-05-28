@@ -1,6 +1,6 @@
 [project]
 name = "ntloss"
-version = "0.3.1"
+version = "0.3.2"
 description = "Number Token Loss - A regression-alike loss to improve numerical reasoning in language models"
 readme = "README.md"                    
 requires-python = ">=3.10"
@@ -42,7 +42,7 @@ classifiers = [
 [project.urls]
 "Source code"     = "https://github.com/AI4SD/number-token-loss"
 "Bug Tracker"  = "https://github.com/AI4SD/number-token-loss/issues"
-"Paper"     = "https://arxiv.org/abs/2411.02083"
+"Paper"     = "https://ibm.biz/ntl-paper"
 "Demo"     = "https://huggingface.co/spaces/jannisborn/NumberTokenLoss"
 "Landing Page"     = "https://tum-ai.github.io/number-token-loss/"
 
